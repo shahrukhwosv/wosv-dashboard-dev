@@ -31,12 +31,18 @@ API_BASE_TEMPLATE = "https://api.lightspeedapp.com/API/V3/Account/{account_id}"
 def _get_db_connection():
     """Returns a psycopg2 connection if DATABASE_URL is set (e.g. Railway's
     Postgres add-on), or None if no database is configured. Kept as a
-    lazy import so environments without psycopg2 installed don't break."""
+    lazy import so environments without psycopg2 installed don't break.
+
+    Uses a short connect_timeout so a database problem (unreachable host,
+    networking issue) shows up as a fast, visible error instead of hanging
+    the whole app indefinitely - an indefinite hang here is what Railway
+    reports as a generic 'Application failed to respond' with no useful
+    detail in the logs."""
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         return None
     import psycopg2
-    return psycopg2.connect(database_url)
+    return psycopg2.connect(database_url, connect_timeout=10)
 
 
 def _ensure_config_table(conn):
