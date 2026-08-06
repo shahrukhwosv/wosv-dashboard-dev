@@ -1,0 +1,19 @@
+{
+  "_comment": "Fill in google_sheet_id below (the long ID in the sheet's URL between /d/ and /edit). store_sheet_to_key maps each column-block's store name on the invoice sheet to the matching store_key in stores_config.json. West Greenville and Nashville are placeholders until those stores are connected via 2_connect_a_store.command.",
+  "google_sheet_id": "1ReoU2DyRdKUdzqNSMLizCdpk-G6FIOmy2nmBiKD8GPc",
+  "worksheet_name": "Sheet1",
+  "vendor_name": "Touch Tell",
+  "store_sheet_to_key": {
+    "Lovers": "store_3",
+    "Liquor Depot": "store_9",
+    "Aubrey": "store_4",
+    "Rowlett": "store_8",
+    "Oaklawn": "store_2",
+    "Frisco": "store_5",
+    "Lower Greenville": "store_6",
+    "Princeton": "store_1",
+    "West Greenville": "store_10",
+    "Nashville": "store_11",
+    "Hillcrest": "store_7"
+  }
+}

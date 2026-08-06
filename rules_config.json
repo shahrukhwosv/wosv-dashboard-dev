@@ -1,0 +1,39 @@
+{
+  "_comment": "Edit this file to add/change/remove commission rules. Rules stack (all that apply are added together). No coding required to adjust amounts or thresholds.",
+  "rules": [
+    {
+      "id": "big_sale_bonus",
+      "enabled": true,
+      "type": "per_transaction_threshold",
+      "description": "$100 sale - $5",
+      "threshold_amount": 100.0,
+      "payout_amount": 5.0,
+      "amount_field": "subtotal"
+    },
+    {
+      "id": "puff_promo",
+      "enabled": true,
+      "type": "promo_applied",
+      "description": "5000+ Puff Promo - $1",
+      "promo_name_match": [
+        "5000+ PUFF DISPOSABLE PROMO"
+      ],
+      "payout_amount": 1.0,
+      "conversions_per_payout": 2,
+      "count_mode": "line"
+    },
+    {
+      "id": "B4G1",
+      "enabled": true,
+      "type": "promo_applied",
+      "description": "B4G1 (Disposables, Gummies, Prerolls) - $1",
+      "promo_name_match": [
+        "BUY 4 GET 1 PREROLLS",
+        "B4G1 Disposables",
+        "B4G1 Gummies"
+      ],
+      "payout_amount": 1.0,
+      "count_mode": "line"
+    }
+  ]
+}
