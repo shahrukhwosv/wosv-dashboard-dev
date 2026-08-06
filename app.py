@@ -30,6 +30,9 @@ touch_tell_page = st.Page(
 pace_calculator_page = st.Page(
     "pace_calculator_page.py", title="Pace Calculator", icon="📈"
 )
+add_store_page = st.Page(
+    "add_store_page.py", title="Add Store", icon="➕"
+)
 
 pg = st.navigation({
     "WOSV Dashboard": [
@@ -37,6 +40,7 @@ pg = st.navigation({
         transactions_page,
         touch_tell_page,
         pace_calculator_page,
+        add_store_page,
     ]
 })
 pg.run()

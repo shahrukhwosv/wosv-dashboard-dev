@@ -28,9 +28,60 @@ TOKEN_URL_TEMPLATE = "https://cloud.lightspeedapp.com/oauth/access_token.php"
 API_BASE_TEMPLATE = "https://api.lightspeedapp.com/API/V3/Account/{account_id}"
 
 
-def load_config():
-    config_json = os.getenv("STORES_CONFIG_JSON")
+def _get_db_connection():
+    """Returns a psycopg2 connection if DATABASE_URL is set (e.g. Railway's
+    Postgres add-on), or None if no database is configured. Kept as a
+    lazy import so environments without psycopg2 installed don't break."""
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        return None
+    import psycopg2
+    return psycopg2.connect(database_url)
 
+
+def _ensure_config_table(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_config (
+                id INTEGER PRIMARY KEY,
+                config_json JSONB NOT NULL,
+                updated_at TIMESTAMPTZ DEFAULT now()
+            )
+            """
+        )
+    conn.commit()
+
+
+def load_config():
+    """
+    Loads the full config dict (client_id/secret + all stores). Tries, in
+    order:
+      1. A Postgres database (if DATABASE_URL is set) - this is what makes
+         changes (like adding a new store) actually persist on Railway,
+         where the local filesystem doesn't survive restarts/redeploys.
+      2. The STORES_CONFIG_JSON environment variable (legacy Railway setup).
+      3. The local stores_config.json file (local development).
+    The returned dict shape is identical regardless of source, so every
+    other file that calls load_config() doesn't need to know or care where
+    the data actually came from.
+    """
+    conn = _get_db_connection()
+    if conn:
+        try:
+            _ensure_config_table(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT config_json FROM app_config WHERE id = 1")
+                row = cur.fetchone()
+                if row:
+                    return row[0]
+        finally:
+            conn.close()
+        # Database is reachable but has no config saved yet - fall through
+        # to bootstrap from the env var/file below. The next save_config()
+        # call will persist it into the database from then on.
+
+    config_json = os.getenv("STORES_CONFIG_JSON")
     if config_json:
         return json.loads(config_json)
 
@@ -39,14 +90,35 @@ def load_config():
 
 
 def save_config(config):
-    # On Railway, configuration comes from an environment variable.
-    # Writing stores_config.json during a token refresh causes Streamlit to
-    # detect a file change and rerun the app before the report is displayed.
-    # Keep refreshed tokens in memory for the current report instead.
+    """
+    Saves the full config dict. If a database is configured, this actually
+    persists (survives restarts/redeploys) - this is required for the
+    in-app "Add Store" flow to work reliably. Falls back to the old
+    file-based behavior for local development without a database.
+    """
+    conn = _get_db_connection()
+    if conn:
+        try:
+            _ensure_config_table(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO app_config (id, config_json, updated_at)
+                    VALUES (1, %s, now())
+                    ON CONFLICT (id) DO UPDATE
+                        SET config_json = EXCLUDED.config_json,
+                            updated_at = now()
+                    """,
+                    (json.dumps(config),),
+                )
+            conn.commit()
+            return
+        finally:
+            conn.close()
+
+    # No database configured - old behavior for local dev.
     if os.getenv("STORES_CONFIG_JSON"):
         return
-
-    # Local setup still saves OAuth credentials to stores_config.json.
     with open(CONFIG_PATH, "w") as f:
         json.dump(config, f, indent=2)
 
