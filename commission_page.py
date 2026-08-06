@@ -21,6 +21,7 @@ from lightspeed_client import (
     normalize_sale,
 )
 from commission_engine import load_rules, load_stores_meta, calculate_commissions
+from store_access import get_accessible_store_keys
 
 st.title("Employee Commission Report Generator")
 
@@ -29,15 +30,19 @@ stores = config["stores"]
 rules = load_rules()
 stores_meta = load_stores_meta()
 
-connected_stores = {
-    key: val for key, val in stores.items()
-    if val.get("refresh_token")
-    and not val.get("pace_only")
-    and (
-        val.get("owner_user_id") == st.session_state.user_id
-        or (val.get("owner_user_id") is None and st.session_state.get("is_admin"))
-    )
-}
+if st.session_state.get("is_admin"):
+    connected_stores = {
+        key: val for key, val in stores.items()
+        if val.get("refresh_token") and not val.get("pace_only")
+    }
+else:
+    accessible_keys = get_accessible_store_keys(st.session_state.user_id)
+    connected_stores = {
+        key: val for key, val in stores.items()
+        if val.get("refresh_token")
+        and not val.get("pace_only")
+        and key in accessible_keys
+    }
 
 if not connected_stores:
     st.info('No stores added. Click "Add a Store" in the menu to connect new stores.')

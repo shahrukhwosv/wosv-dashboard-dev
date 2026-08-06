@@ -19,10 +19,15 @@ import streamlit as st
 import requests
 
 from lightspeed_client import load_config, save_config, TOKEN_URL_TEMPLATE
+from store_access import grant_access
 
 AUTHORIZE_URL = "https://cloud.lightspeedapp.com/oauth/authorize.php"
 
 st.title("Add a Store")
+
+if not st.session_state.get("is_admin"):
+    st.error("Only admin accounts can connect new stores.")
+    st.stop()
 
 if not os.getenv("DATABASE_URL"):
     st.error(
@@ -175,9 +180,13 @@ if st.session_state.pending_store_key:
                 "token_expires_at": (
                     datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
                 ).isoformat(),
-                "owner_user_id": st.session_state.user_id,
             }
             save_config(config)
+            # Whoever connects a store can immediately see it themselves.
+            # Admins can see every store regardless; for non-admin users,
+            # this grant is what makes it show up for them - an admin can
+            # extend access to other users afterward from Manage Users.
+            grant_access(st.session_state.user_id, store_key)
 
             st.success(
                 f"✅ {st.session_state.pending_store_name} connected successfully! "
@@ -188,18 +197,10 @@ if st.session_state.pending_store_key:
             st.session_state.pending_avg_ticket_threshold = 75.0
 
 st.divider()
-st.subheader("Your connected stores")
-connected = {
-    k: v for k, v in config["stores"].items()
-    if v.get("refresh_token")
-    and (
-        v.get("owner_user_id") == st.session_state.user_id
-        or (v.get("owner_user_id") is None and st.session_state.get("is_admin"))
-    )
-}
+st.subheader("All connected stores")
+connected = {k: v for k, v in config["stores"].items() if v.get("refresh_token")}
 if connected:
     for key, store in connected.items():
-        owner_note = " *(legacy, unowned)*" if store.get("owner_user_id") is None else ""
-        st.write(f"- **{store.get('name', key)}** ({key}){owner_note}")
+        st.write(f"- **{store.get('name', key)}** ({key})")
 else:
-    st.write("You haven't connected any stores yet.")
+    st.write("No stores connected yet.")

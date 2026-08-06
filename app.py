@@ -1,10 +1,10 @@
 """
 App entry point / router.
 
-Requires login (see auth.py) before showing any page. Each user only sees
-the stores they've personally added (enforced in commission_page.py by
-filtering on owner_user_id). The "Manage Users" page only appears in the
-sidebar for admin accounts.
+Requires login (see auth.py) before showing any page. Regular users only
+see stores explicitly granted to them (see store_access.py) - admins see
+every connected store automatically. Both "Manage Users" and "Add Store"
+only appear in the sidebar for admin accounts.
 
 Run with:  streamlit run app.py
 
@@ -39,17 +39,16 @@ commissions_page = st.Page(
 pace_calculator_page = st.Page(
     "pace_calculator_page.py", title="Pace Calculator", icon="📈"
 )
-add_store_page = st.Page(
-    "add_store_page.py", title="Add Store", icon="➕"
-)
 
 pages = [
     commissions_page,
     pace_calculator_page,
-    add_store_page,
 ]
 
 if st.session_state.get("is_admin"):
+    pages.append(
+        st.Page("add_store_page.py", title="Add Store", icon="➕")
+    )
     pages.append(
         st.Page("manage_users_page.py", title="Manage Users", icon="👤")
     )

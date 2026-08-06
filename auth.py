@@ -104,11 +104,9 @@ def list_users():
 
 def delete_user(user_id, requesting_user_id):
     """
-    Deletes a user account. Any stores they owned are NOT deleted - they're
-    reassigned to "legacy" (owner_user_id cleared to None), which makes
-    them visible to admins only, same treatment as the original pre-login
-    stores. This avoids a store silently becoming invisible to everyone
-    just because the person who added it got removed.
+    Deletes a user account. Their store access grants are cleaned up
+    automatically (user_store_access has ON DELETE CASCADE) - the stores
+    themselves are untouched, they just stop being visible to this user.
 
     Safety checks (raises ValueError):
       - can't delete your own currently-logged-in account
@@ -137,20 +135,6 @@ def delete_user(user_id, requesting_user_id):
         conn.commit()
     finally:
         conn.close()
-
-    # Reassign any stores this user owned to "legacy" so they stay visible
-    # to admins instead of disappearing.
-    from lightspeed_client import load_config, save_config
-    config = load_config()
-    orphaned_count = 0
-    for store in config.get("stores", {}).values():
-        if store.get("owner_user_id") == user_id:
-            store["owner_user_id"] = None
-            orphaned_count += 1
-    if orphaned_count:
-        save_config(config)
-
-    return orphaned_count
 
 
 def require_login():
