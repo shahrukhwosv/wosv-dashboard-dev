@@ -57,18 +57,18 @@ else:
     selected_user_id = username_to_id[selected_username]
 
     current_access = get_accessible_store_keys(selected_user_id)
-    store_key_by_name = {name: key for key, name in all_stores.items()}
-    current_names = [all_stores[k] for k in current_access if k in all_stores]
+    store_keys_sorted = sorted(all_stores.keys(), key=lambda k: all_stores[k])
+    default_keys = [k for k in store_keys_sorted if k in current_access]
 
-    selected_names = st.multiselect(
+    selected_keys = st.multiselect(
         f"Stores {selected_username} can see",
-        options=list(all_stores.values()),
-        default=current_names,
+        options=store_keys_sorted,
+        default=default_keys,
+        format_func=lambda key: all_stores.get(key, key),
     )
 
     if st.button("Save access", type="primary"):
-        selected_keys = {store_key_by_name[name] for name in selected_names}
-        set_user_access(selected_user_id, selected_keys)
+        set_user_access(selected_user_id, set(selected_keys))
         st.success(f"Updated access for {selected_username}.")
         st.rerun()
 
