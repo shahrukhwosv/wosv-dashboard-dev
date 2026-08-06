@@ -5,6 +5,9 @@ Lets you connect a new Lightspeed store to the dashboard directly from the
 browser, instead of running oauth_setup.py in a terminal. Requires a
 database to be configured (DATABASE_URL) - otherwise newly-added stores
 would be lost the next time the app restarts.
+
+Access is controlled by the login system in auth.py/app.py - no separate
+page password needed here anymore.
 """
 
 import os
@@ -18,28 +21,6 @@ import requests
 from lightspeed_client import load_config, save_config, TOKEN_URL_TEMPLATE
 
 AUTHORIZE_URL = "https://cloud.lightspeedapp.com/oauth/authorize.php"
-
-# Lightweight protection until the full multi-user login system is built -
-# same pattern as PACE_CALCULATOR_PASSWORD in pace_calculator_page.py.
-# Set ADD_STORE_PASSWORD as an environment variable (locally and on
-# Railway) - replace the placeholder fallback with your own password.
-PAGE_PASSWORD = os.getenv("ADD_STORE_PASSWORD", "PASTE_A_PASSWORD_HERE")
-
-if "add_store_unlocked" not in st.session_state:
-    st.session_state.add_store_unlocked = False
-
-if not st.session_state.add_store_unlocked:
-    st.title("Add a Store")
-    with st.form("add_store_password_form"):
-        entered = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Unlock")
-    if submitted:
-        if entered == PAGE_PASSWORD:
-            st.session_state.add_store_unlocked = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-    st.stop()
 
 st.title("Add a Store")
 
@@ -194,6 +175,7 @@ if st.session_state.pending_store_key:
                 "token_expires_at": (
                     datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
                 ).isoformat(),
+                "owner_user_id": st.session_state.user_id,
             }
             save_config(config)
 
@@ -206,10 +188,18 @@ if st.session_state.pending_store_key:
             st.session_state.pending_avg_ticket_threshold = 75.0
 
 st.divider()
-st.subheader("Currently connected stores")
-connected = {k: v for k, v in config["stores"].items() if v.get("refresh_token")}
+st.subheader("Your connected stores")
+connected = {
+    k: v for k, v in config["stores"].items()
+    if v.get("refresh_token")
+    and (
+        v.get("owner_user_id") == st.session_state.user_id
+        or (v.get("owner_user_id") is None and st.session_state.get("is_admin"))
+    )
+}
 if connected:
     for key, store in connected.items():
-        st.write(f"- **{store.get('name', key)}** ({key})")
+        owner_note = " *(legacy, unowned)*" if store.get("owner_user_id") is None else ""
+        st.write(f"- **{store.get('name', key)}** ({key}){owner_note}")
 else:
-    st.write("No stores connected yet.")
+    st.write("You haven't connected any stores yet.")

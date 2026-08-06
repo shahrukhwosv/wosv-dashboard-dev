@@ -31,7 +31,12 @@ stores_meta = load_stores_meta()
 
 connected_stores = {
     key: val for key, val in stores.items()
-    if val.get("refresh_token") and not val.get("pace_only")
+    if val.get("refresh_token")
+    and not val.get("pace_only")
+    and (
+        val.get("owner_user_id") == st.session_state.user_id
+        or (val.get("owner_user_id") is None and st.session_state.get("is_admin"))
+    )
 }
 
 if not connected_stores:
