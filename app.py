@@ -2,15 +2,16 @@
 App entry point / router.
 
 Requires login (see auth.py) before showing any page. Each user only sees
-the stores they've personally added (enforced in commission_page.py and
-reconciliation_page.py by filtering on owner_user_id). The "Manage Users"
-page only appears in the sidebar for admin accounts.
+the stores they've personally added (enforced in commission_page.py by
+filtering on owner_user_id). The "Manage Users" page only appears in the
+sidebar for admin accounts.
 
 Run with:  streamlit run app.py
 
-The actual page content lives in commission_page.py, reconciliation_page.py,
-touch_tell_page.py, pace_calculator_page.py, add_store_page.py, and
-manage_users_page.py.
+The actual page content lives in commission_page.py, pace_calculator_page.py,
+add_store_page.py, and manage_users_page.py. reconciliation_page.py and
+touch_tell_page.py still exist in the repo but are no longer linked in the
+sidebar - re-add them to the `pages` list below if needed again later.
 
 NOTE: pace_calculator_page.py has its own separate simple password gate
 built in (see PACE_CALCULATOR_PASSWORD) - unrelated to the login system
@@ -35,12 +36,6 @@ with st.sidebar:
 commissions_page = st.Page(
     "commission_page.py", title="Commissions", icon="💰"
 )
-transactions_page = st.Page(
-    "reconciliation_page.py", title="Transactions", icon="💳"
-)
-touch_tell_page = st.Page(
-    "touch_tell_page.py", title="Touch Tell", icon="📦"
-)
 pace_calculator_page = st.Page(
     "pace_calculator_page.py", title="Pace Calculator", icon="📈"
 )
@@ -50,8 +45,6 @@ add_store_page = st.Page(
 
 pages = [
     commissions_page,
-    transactions_page,
-    touch_tell_page,
     pace_calculator_page,
     add_store_page,
 ]
