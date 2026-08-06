@@ -201,6 +201,21 @@ st.subheader("All connected stores")
 connected = {k: v for k, v in config["stores"].items() if v.get("refresh_token")}
 if connected:
     for key, store in connected.items():
-        st.write(f"- **{store.get('name', key)}** ({key})")
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.write(f"- **{store.get('name', key)}** ({key})")
+        with col2:
+            confirm_key = f"confirm_delete_store_{key}"
+            if st.session_state.get(confirm_key):
+                if st.button("Confirm delete", key=f"confirm_del_btn_{key}", type="primary"):
+                    del config["stores"][key]
+                    save_config(config)
+                    st.success(f"Deleted {store.get('name', key)} ({key}).")
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
+            else:
+                if st.button("Delete", key=f"del_btn_{key}"):
+                    st.session_state[confirm_key] = True
+                    st.rerun()
 else:
     st.write("No stores connected yet.")
