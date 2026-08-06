@@ -33,6 +33,9 @@ with st.sidebar:
             st.session_state.pop(key, None)
         st.rerun()
 
+dashboard_page = st.Page(
+    "dashboard_page.py", title="Dashboard", icon="🏠", default=True
+)
 commissions_page = st.Page(
     "commission_page.py", title="Commissions", icon="💰"
 )
@@ -41,6 +44,7 @@ pace_calculator_page = st.Page(
 )
 
 pages = [
+    dashboard_page,
     commissions_page,
     pace_calculator_page,
 ]
