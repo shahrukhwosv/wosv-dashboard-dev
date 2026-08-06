@@ -40,10 +40,7 @@ connected_stores = {
 }
 
 if not connected_stores:
-    st.error(
-        "No stores are connected yet. Run `python oauth_setup.py store_1` "
-        "(through store_10) in your terminal first — see README.md."
-    )
+    st.info('No stores added. Click "Add a Store" in the menu to connect new stores.')
     st.stop()
 
 col1, col2 = st.columns([1, 2])

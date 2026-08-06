@@ -67,7 +67,7 @@ connected_stores = {
 }
 
 if not connected_stores:
-    st.error("No stores are connected yet. See README.md to connect a store first.")
+    st.info('No stores added. Click "Add a Store" in the menu to connect new stores.')
     st.stop()
 
 col1, col2 = st.columns([1, 1])

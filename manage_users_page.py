@@ -5,7 +5,7 @@ accounts. Regular (non-admin) users never see this page in the sidebar.
 
 import streamlit as st
 
-from auth import create_user, list_users
+from auth import create_user, list_users, delete_user
 
 st.title("Manage Users")
 
@@ -37,4 +37,26 @@ st.divider()
 st.subheader("Existing users")
 for user_id, username, is_admin, created_at in list_users():
     label = f"**{username}**" + (" (admin)" if is_admin else "")
-    st.write(f"- {label} — created {created_at.strftime('%b %d, %Y')}")
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.write(f"- {label} — created {created_at.strftime('%b %d, %Y')}")
+    with col2:
+        confirm_key = f"confirm_delete_{user_id}"
+        if st.session_state.get(confirm_key):
+            if st.button("Confirm delete", key=f"confirm_btn_{user_id}", type="primary"):
+                try:
+                    orphaned = delete_user(user_id, st.session_state.user_id)
+                    note = (
+                        f" {orphaned} store(s) they owned are now marked "
+                        f"'legacy' and visible to admins only."
+                        if orphaned else ""
+                    )
+                    st.success(f"Deleted '{username}'.{note}")
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+        else:
+            if st.button("Delete", key=f"delete_btn_{user_id}"):
+                st.session_state[confirm_key] = True
+                st.rerun()

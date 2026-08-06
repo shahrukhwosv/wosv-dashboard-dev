@@ -102,6 +102,57 @@ def list_users():
         conn.close()
 
 
+def delete_user(user_id, requesting_user_id):
+    """
+    Deletes a user account. Any stores they owned are NOT deleted - they're
+    reassigned to "legacy" (owner_user_id cleared to None), which makes
+    them visible to admins only, same treatment as the original pre-login
+    stores. This avoids a store silently becoming invisible to everyone
+    just because the person who added it got removed.
+
+    Safety checks (raises ValueError):
+      - can't delete your own currently-logged-in account
+      - can't delete the last remaining admin account
+    """
+    if user_id == requesting_user_id:
+        raise ValueError("You can't delete your own account while logged in as it.")
+
+    conn = _require_db()
+    try:
+        _ensure_users_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_admin FROM app_users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("That user no longer exists.")
+            target_is_admin = row[0]
+
+            if target_is_admin:
+                cur.execute("SELECT COUNT(*) FROM app_users WHERE is_admin = true")
+                admin_count = cur.fetchone()[0]
+                if admin_count <= 1:
+                    raise ValueError("Can't delete the last remaining admin account.")
+
+            cur.execute("DELETE FROM app_users WHERE id = %s", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Reassign any stores this user owned to "legacy" so they stay visible
+    # to admins instead of disappearing.
+    from lightspeed_client import load_config, save_config
+    config = load_config()
+    orphaned_count = 0
+    for store in config.get("stores", {}).values():
+        if store.get("owner_user_id") == user_id:
+            store["owner_user_id"] = None
+            orphaned_count += 1
+    if orphaned_count:
+        save_config(config)
+
+    return orphaned_count
+
+
 def require_login():
     """
     Call at the top of app.py before rendering any page. Shows a login form

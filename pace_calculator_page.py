@@ -32,28 +32,14 @@ from lightspeed_client import load_config
 from sales_pace import compute_pace, month_actual_total, read_daily_log, update_daily_log
 from pace_pdf_report import MONTH_NAMES, build_monthly_pdf
 
-PAGE_PASSWORD = os.getenv("PACE_CALCULATOR_PASSWORD", "PASTE_A_PASSWORD_HERE")
-
-if "pace_calculator_unlocked" not in st.session_state:
-    st.session_state.pace_calculator_unlocked = False
-
-if not st.session_state.pace_calculator_unlocked:
-    st.title("Sales Pace Calculator")
-    with st.form("pace_password_form"):
-        entered_password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Unlock")
-    if submitted:
-        if entered_password == PAGE_PASSWORD:
-            st.session_state.pace_calculator_unlocked = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-    st.stop()
-
 st.title("Sales Pace Calculator")
 
 config = load_config()
-store_keys = list(config["stores"].keys())
+store_keys = [
+    key for key, val in config["stores"].items()
+    if val.get("owner_user_id") == st.session_state.user_id
+    or (val.get("owner_user_id") is None and st.session_state.get("is_admin"))
+]
 store_names = {
     key: config["stores"][key].get("name", key) for key in store_keys
 }
