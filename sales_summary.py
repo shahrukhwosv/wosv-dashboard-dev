@@ -43,6 +43,38 @@ def _ensure_table(conn):
     conn.commit()
 
 
+def upsert_daily_sales_batch(rows):
+    """
+    Same as upsert_daily_sales but for many rows at once, reusing a single
+    database connection instead of opening/closing one per row - much
+    faster for bulk backfills.
+
+    rows: list of (store_key, sale_date, total_sales, total_units, total_sale_count)
+    """
+    if not rows:
+        return
+    conn = _require_db()
+    try:
+        _ensure_table(conn)
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO daily_store_sales
+                    (store_key, sale_date, total_sales, total_units, total_sale_count, updated_at)
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (store_key, sale_date) DO UPDATE SET
+                    total_sales = EXCLUDED.total_sales,
+                    total_units = EXCLUDED.total_units,
+                    total_sale_count = EXCLUDED.total_sale_count,
+                    updated_at = now()
+                """,
+                rows,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def upsert_daily_sales(store_key, sale_date, total_sales, total_units, total_sale_count):
     conn = _require_db()
     try:
