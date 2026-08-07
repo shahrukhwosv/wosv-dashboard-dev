@@ -123,12 +123,22 @@ if trend_df.empty:
     st.write("No historical data in the pace log sheet yet for this range.")
 else:
     store_names = {k: stores[k].get("name", k) for k in accessible_store_keys}
+
+    selected_names = st.multiselect(
+        "Stores to show on the chart",
+        options=sorted(store_names.values()),
+        default=sorted(store_names.values()),
+    )
+
     trend_df["month"] = trend_df["date"].apply(lambda d: d.strftime("%b %Y"))
     trend_df["store_name"] = trend_df["store"].map(store_names)
+    trend_df = trend_df[trend_df["store_name"].isin(selected_names)]
 
-    pivot = trend_df.pivot_table(
-        index="month", columns="store_name", values="total", aggfunc="sum"
-    )
-    pivot = pivot.reindex(month_order)
-
-    st.line_chart(pivot)
+    if trend_df.empty:
+        st.write("No stores selected.")
+    else:
+        pivot = trend_df.pivot_table(
+            index="month", columns="store_name", values="total", aggfunc="sum"
+        )
+        pivot = pivot.reindex(month_order)
+        st.line_chart(pivot)
