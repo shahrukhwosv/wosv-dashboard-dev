@@ -37,9 +37,13 @@ with st.sidebar:
 commissions_page = st.Page(
     "commission_page.py", title="Commissions", icon="💰", default=True
 )
+transactions_page = st.Page(
+    "reconciliation_page.py", title="Transactions", icon="💳"
+)
 
 pages = [
     commissions_page,
+    transactions_page,
 ]
 
 if st.session_state.get("is_admin"):
