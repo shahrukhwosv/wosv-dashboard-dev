@@ -27,6 +27,73 @@ CONFIG_PATH = "stores_config.json"
 TOKEN_URL_TEMPLATE = "https://cloud.lightspeedapp.com/oauth/access_token.php"
 API_BASE_TEMPLATE = "https://api.lightspeedapp.com/API/V3/Account/{account_id}"
 
+# Each store's actual local timezone, for correctly converting "yesterday"/
+# "this month" etc into UTC boundaries. Default is Central; override any
+# store that's genuinely in a different region here.
+#
+# store_1 and store_6 are set to Eastern despite being confirmed Central-
+# time stores (Princeton, TX and Greenville) - this is a known workaround
+# for an unexplained ~1hr offset bug discovered while building the
+# Reconciliation tool. The root cause was never fully confirmed, but this
+# label reliably produces correct results for those two stores.
+#
+# Everything below that is a REAL Florida store (Eastern time, confirmed
+# 2026-08) - not a workaround, just an accurate label. Verify a report
+# against real sale times before fully trusting these, same way Princeton/
+# Greenville were originally caught.
+DEFAULT_TIMEZONE = "America/Chicago"
+STORE_TIMEZONE_OVERRIDES = {
+    "store_1": "America/New_York",  # Princeton - workaround, see note above
+    "store_6": "America/New_York",  # Greenville - workaround, see note above
+
+    # Florida stores (confirmed Eastern, 2026-08)
+    "davie": "America/New_York",
+    "doral": "America/New_York",
+    "delray": "America/New_York",
+    "sunset": "America/New_York",
+    "boynton": "America/New_York",
+    "gateway": "America/New_York",
+    "kendall": "America/New_York",
+    "killian": "America/New_York",
+    "pompano": "America/New_York",
+    "sunrise": "America/New_York",
+    "aventura": "America/New_York",
+    "brickell": "America/New_York",
+    "key_west": "America/New_York",
+    "lakepark": "America/New_York",
+    "las_olas": "America/New_York",
+    "palmetto": "America/New_York",
+    "surfside": "America/New_York",
+    "woc_mimo": "America/New_York",
+    "ftl_beach": "America/New_York",
+    "hollywood": "America/New_York",
+    "homestead": "America/New_York",
+    "pinecrest": "America/New_York",
+    "commercial": "America/New_York",
+    "palm_beach": "America/New_York",
+    "sweetwater": "America/New_York",
+    "17th_street": "America/New_York",
+    "doral_south": "America/New_York",
+    "south_beach": "America/New_York",
+    "south_miami": "America/New_York",
+    "tallahassee": "America/New_York",
+    "coral_gables": "America/New_York",
+    "downtown_ftl": "America/New_York",
+    "wilton_manors": "America/New_York",
+    "woc_edgewater": "America/New_York",
+    "brickell_center": "America/New_York",
+    "flagler_village": "America/New_York",
+    "pinecrest_north": "America/New_York",
+    "north_miami_beach": "America/New_York",
+    "brickell_smoke_shop": "America/New_York",
+    "store_12": "America/New_York",  # Lake Worth, FL (not Lake Worth, TX)
+}
+
+
+def _get_store_timezone(store_key):
+    tz_name = STORE_TIMEZONE_OVERRIDES.get(store_key, DEFAULT_TIMEZONE)
+    return ZoneInfo(tz_name)
+
 
 def _get_db_connection():
     """Returns a psycopg2 connection if DATABASE_URL is set (e.g. Railway's
@@ -278,9 +345,11 @@ def fetch_sales(config, store_key, start_date, end_date):
     max_pages = 50  # safety net: 50 pages * 100 = 5,000 sales, plenty for one store/period; stops runaway loops fast
 
     # Lightspeed stores timestamps in UTC, while the website report uses the
-    # store's local business dates. Convert the selected Central Time dates
-    # into UTC boundaries so June 7 means midnight in Texas—not midnight UTC.
-    store_timezone = ZoneInfo("America/Chicago")
+    # store's local business dates. Convert the selected dates into UTC
+    # boundaries using THIS STORE'S actual timezone (see
+    # STORE_TIMEZONE_OVERRIDES above) so the date range means midnight in
+    # that store's own region, not always Texas.
+    store_timezone = _get_store_timezone(store_key)
     start_local = datetime.combine(start_date, dt_time.min, tzinfo=store_timezone)
     end_local_exclusive = datetime.combine(
         end_date + timedelta(days=1), dt_time.min, tzinfo=store_timezone
