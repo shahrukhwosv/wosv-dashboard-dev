@@ -50,13 +50,15 @@ st.markdown(
     div[data-testid="stHorizontalBlock"] { margin-bottom: 0rem; gap: 0.5rem; }
     hr { margin: 0.2rem 0 !important; }
 
-    /* Stat cards (Total Sales / Total Units Sold) */
+    /* Stat cards (Total Sales / Total Units Sold) - capped to the same
+       width as the table below instead of stretching across the page. */
     .cat-stat-row {
         display: flex;
         border: 1px solid rgba(128, 128, 128, 0.25);
         border-radius: 12px;
         overflow: hidden;
         margin-bottom: 0.75rem;
+        max-width: 640px;
     }
     .cat-stat-card {
         flex: 1;
