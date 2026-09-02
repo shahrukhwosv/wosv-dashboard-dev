@@ -386,14 +386,18 @@ def fetch_items_by_category(config, store_key, category_id):
 
 def fetch_items_by_keyword(config, store_key, keyword):
     """Returns {itemID: description} for items whose description contains
-    the given keyword as a whole word (case-insensitive) at one store.
+    the given keyword as a whole word (case-insensitive) at one store,
+    also matching a trailing plural/possessive "s" or "'s" so a search for
+    "mama" catches "Mama's Cannabis Infused" and "Mamas Edibles" too.
 
     Lightspeed's "~" LIKE operator only does substring matching, which
     would match "raw" inside "strawberry" - so we still use it server-side
     to narrow down candidates (cheap), then apply a word-boundary regex
-    client-side to drop the false-positive substring matches, so a search
-    for "raw" only matches things like "RAW King Size Slims", not
-    "Strawberry Vape Juice".
+    client-side to drop the false-positive substring matches. The boundary
+    is strict at the *start* of the word (so "raw" still won't match
+    inside "strawberry" or "Crawford") but allows an optional trailing
+    "s"/"'s" before the closing boundary (so "mama" also matches "mamas"
+    and "mama's").
     """
     items = {}
     data = api_get(
@@ -403,7 +407,7 @@ def fetch_items_by_keyword(config, store_key, keyword):
         params={"limit": 100, "description": f"~,%{keyword}%"},
     )
     seen_urls = set()
-    word_pattern = re.compile(r"\b" + re.escape(keyword) + r"\b", re.IGNORECASE)
+    word_pattern = re.compile(r"\b" + re.escape(keyword) + r"(?:'s|s)?\b", re.IGNORECASE)
 
     while True:
         raw = data.get("Item", [])
