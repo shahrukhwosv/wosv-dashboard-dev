@@ -384,11 +384,16 @@ def fetch_items_by_category(config, store_key, category_id):
     return items
 
 
-def fetch_items_by_keyword(config, store_key, keyword):
+def fetch_items_by_keyword(config, store_key, keyword, exclude_keyword=None):
     """Returns {itemID: description} for items whose description contains
     the given keyword as a whole word (case-insensitive) at one store,
     also matching a trailing plural/possessive "s" or "'s" so a search for
     "mama" catches "Mama's Cannabis Infused" and "Mamas Edibles" too.
+
+    If exclude_keyword is given, drops any item whose description also
+    contains that word (same whole-word/plural matching rules) - e.g.
+    keyword="pipe", exclude_keyword="water" keeps "Glass Hand Pipe" but
+    drops "18in Water Pipe".
 
     Lightspeed's "~" LIKE operator only does substring matching, which
     would match "raw" inside "strawberry" - so we still use it server-side
@@ -408,6 +413,10 @@ def fetch_items_by_keyword(config, store_key, keyword):
     )
     seen_urls = set()
     word_pattern = re.compile(r"\b" + re.escape(keyword) + r"(?:'s|s)?\b", re.IGNORECASE)
+    exclude_pattern = (
+        re.compile(r"\b" + re.escape(exclude_keyword) + r"(?:'s|s)?\b", re.IGNORECASE)
+        if exclude_keyword else None
+    )
 
     while True:
         raw = data.get("Item", [])
@@ -416,8 +425,11 @@ def fetch_items_by_keyword(config, store_key, keyword):
         for item in raw:
             item_id = str(item.get("itemID", ""))
             description = str(item.get("description", "") or "").strip()
-            if item_id and word_pattern.search(description):
-                items[item_id] = description or item_id
+            if not item_id or not word_pattern.search(description):
+                continue
+            if exclude_pattern and exclude_pattern.search(description):
+                continue
+            items[item_id] = description or item_id
 
         next_url = (data.get("@attributes", {}) or {}).get("next")
         if not next_url or next_url in seen_urls:
@@ -630,13 +642,14 @@ def fetch_category_sales(config, store_key, category_id, start_date, end_date):
     }
 
 
-def fetch_keyword_sales(config, store_key, keyword, start_date, end_date):
+def fetch_keyword_sales(config, store_key, keyword, start_date, end_date, exclude_keyword=None):
     """Sums sales for one store, for all items whose description contains
-    the given keyword, over a date range, including a per-item breakdown of
+    the given keyword (optionally excluding items that also contain
+    exclude_keyword), over a date range, including a per-item breakdown of
     what contributed to the total.
     See fetch_item_ids_sales for how the sales lookup itself works.
     """
-    item_map = fetch_items_by_keyword(config, store_key, keyword)
+    item_map = fetch_items_by_keyword(config, store_key, keyword, exclude_keyword=exclude_keyword)
     result = fetch_item_ids_sales(config, store_key, item_map.keys(), start_date, end_date)
     return {
         "total": result["total"],

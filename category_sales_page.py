@@ -5,13 +5,17 @@ Lets the user search sales three ways:
   - Category: pick a category (e.g. "Rolling Trays") from a dropdown
   - Keyword: type a keyword (e.g. "mug") and it matches any item with that
     exact word in its description (whole-word match, not substring - "raw"
-    matches "RAW King Size Slims" but not "Strawberry Vape Juice")
+    matches "RAW King Size Slims" but not "Strawberry Vape Juice"). An
+    optional "Exclude keyword" drops any item that also contains that word
+    (e.g. keyword "pipe" + exclude "water" keeps "Glass Hand Pipe" but
+    drops "18in Water Pipe")
   - UPC: type an exact UPC and it matches the one item with that code
 
-Either way, pick a date range and which stores to include, and it shows
-how much each selected store sold for that search over that period, with
-each store's row expandable to show exactly which items (alphabetically)
-contributed to that total.
+Either way, pick a date range (or use the This Month/Last Month/This Year
+shortcuts) and which stores to include, and it shows how much each
+selected store sold for that search over that period, with each store's
+row expandable to show exactly which items (alphabetically) contributed
+to that total.
 
 Respects per-user store access (see store_access.py): admins see every
 connected store, regular users only see stores explicitly granted to them -
@@ -356,13 +360,15 @@ def run_category_report(store_keys, categories_by_store, selected_category, star
     return results
 
 
-def run_keyword_report(store_keys, keyword, start_date, end_date):
+def run_keyword_report(store_keys, keyword, exclude_keyword, start_date, end_date):
     """Fetches keyword sales for each store in parallel."""
     config = ls.load_config()
     results = {}
 
     def _fetch_one(store_key):
-        return store_key, ls.fetch_keyword_sales(config, store_key, keyword, start_date, end_date)
+        return store_key, ls.fetch_keyword_sales(
+            config, store_key, keyword, start_date, end_date, exclude_keyword=exclude_keyword
+        )
 
     with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
         futures = [pool.submit(_fetch_one, store_key) for store_key in store_keys]
@@ -420,6 +426,7 @@ search_mode = st.radio("Search by", ["Category", "Keyword", "UPC"], horizontal=T
 
 selected_category = None
 keyword = None
+exclude_keyword = None
 upc = None
 
 if search_mode == "Category":
@@ -434,7 +441,19 @@ if search_mode == "Category":
 
     selected_category = st.selectbox("Category", category_options)
 elif search_mode == "Keyword":
-    keyword = st.text_input("Keyword", placeholder="e.g. raw", help="Matches whole words only, e.g. \"raw\" won't match \"strawberry\"").strip()
+    keyword_cols = st.columns(2)
+    with keyword_cols[0]:
+        keyword = st.text_input(
+            "Keyword",
+            placeholder="e.g. raw",
+            help="Matches whole words only, e.g. \"raw\" won't match \"strawberry\"",
+        ).strip()
+    with keyword_cols[1]:
+        exclude_keyword = st.text_input(
+            "Exclude keyword (optional)",
+            placeholder="e.g. water",
+            help="Drops any item that also has this word, e.g. exclude \"water\" to keep \"pipe\" from matching \"water pipe\"",
+        ).strip() or None
 else:
     upc = st.text_input("UPC", placeholder="e.g. 012345678905").strip()
 
@@ -455,11 +474,34 @@ else:
         key=lambda store_key: (connected_stores[store_key].get("name") or store_key).casefold(),
     )
 
+preset_cols = st.columns(3)
+if preset_cols[0].button("This Month", use_container_width=True):
+    today = date.today()
+    st.session_state["cat_sales_start"] = today.replace(day=1)
+    st.session_state["cat_sales_end"] = today
+if preset_cols[1].button("Last Month", use_container_width=True):
+    first_of_this_month = date.today().replace(day=1)
+    last_of_prev_month = first_of_this_month - timedelta(days=1)
+    st.session_state["cat_sales_start"] = last_of_prev_month.replace(day=1)
+    st.session_state["cat_sales_end"] = last_of_prev_month
+if preset_cols[2].button("This Year", use_container_width=True):
+    today = date.today()
+    st.session_state["cat_sales_start"] = today.replace(month=1, day=1)
+    st.session_state["cat_sales_end"] = today
+
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input("Start date", value=date.today() - timedelta(days=30))
+    start_date = st.date_input(
+        "Start date",
+        value=st.session_state.get("cat_sales_start", date.today() - timedelta(days=30)),
+        key="cat_sales_start",
+    )
 with col2:
-    end_date = st.date_input("End date", value=date.today())
+    end_date = st.date_input(
+        "End date",
+        value=st.session_state.get("cat_sales_end", date.today()),
+        key="cat_sales_end",
+    )
 
 if start_date > end_date:
     st.error("Start date must be before end date.")
@@ -484,7 +526,7 @@ if st.button("Run report", type="primary"):
                 selected_stores, categories_by_store, selected_category, start_date, end_date
             )
         elif search_mode == "Keyword":
-            results = run_keyword_report(selected_stores, keyword, start_date, end_date)
+            results = run_keyword_report(selected_stores, keyword, exclude_keyword, start_date, end_date)
         else:
             results = run_upc_report(selected_stores, upc, start_date, end_date)
 
