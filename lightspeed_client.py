@@ -591,8 +591,8 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
 
 def _build_item_breakdown(item_map, by_item):
     """Merges an {itemID: description} map with a {itemID: {total, quantity}}
-    breakdown into a list of rows sorted by total sales descending. Items
-    that matched the search but had zero qualifying sales are left out.
+    breakdown into a list of rows sorted alphabetically by item description.
+    Items that matched the search but had zero qualifying sales are left out.
     """
     rows = []
     for item_id, totals in by_item.items():
@@ -601,7 +601,7 @@ def _build_item_breakdown(item_map, by_item):
             "total": totals["total"],
             "quantity": totals["quantity"],
         })
-    rows.sort(key=lambda row: row["total"], reverse=True)
+    rows.sort(key=lambda row: row["description"].casefold())
     return rows
 
 

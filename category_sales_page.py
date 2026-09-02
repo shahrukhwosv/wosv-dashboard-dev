@@ -8,9 +8,9 @@ Lets the user search sales three ways:
   - UPC: type an exact UPC and it matches the one item with that code
 
 Either way, pick a date range and which stores to include, and it shows
-how much each selected store sold for that search over that period, plus
-an expandable per-store breakdown of exactly which items contributed to
-that total.
+how much each selected store sold for that search over that period, with
+each store's row expandable to show exactly which items (alphabetically)
+contributed to that total.
 
 Respects per-user store access (see store_access.py): admins see every
 connected store, regular users only see stores explicitly granted to them -
@@ -136,7 +136,10 @@ if not connected_stores:
     st.info('No stores added. Click "Add a Store" in the menu to connect new stores.')
     st.stop()
 
-all_store_keys = list(connected_stores.keys())
+all_store_keys = sorted(
+    connected_stores.keys(),
+    key=lambda store_key: (connected_stores[store_key].get("name") or store_key).casefold(),
+)
 
 search_mode = st.radio("Search by", ["Category", "Keyword", "UPC"], horizontal=True)
 
@@ -169,6 +172,12 @@ else:
         all_store_keys,
         default=all_store_keys,
         format_func=lambda store_key: connected_stores[store_key].get("name") or store_key,
+    )
+    # multiselect returns picks in click order, not option order - re-sort
+    # alphabetically so store blocks below are always in the same order.
+    selected_stores = sorted(
+        selected_stores,
+        key=lambda store_key: (connected_stores[store_key].get("name") or store_key).casefold(),
     )
 
 col1, col2 = st.columns(2)
@@ -204,24 +213,18 @@ if st.button("Run report", type="primary"):
         else:
             results = run_upc_report(selected_stores, upc, start_date, end_date)
 
-    rows = []
     missing_stores = []
-    for store_key in selected_stores:
-        store_name = connected_stores[store_key].get("name") or store_key
-        result = results.get(store_key)
-        if result is None:
-            missing_stores.append(store_name)
-            rows.append({"Store": store_name, "Total Sales": 0.0, "Units Sold": 0.0})
-        else:
-            rows.append({
-                "Store": store_name,
-                "Total Sales": result["total"],
-                "Units Sold": result["quantity"],
-            })
+    total_sales_sum = 0.0
+    units_sold_sum = 0.0
 
     # A "no result" for Category mode can mean the category name doesn't
-    # exist at that store (worth flagging). For Keyword mode, $0 legitimately
-    # just means nothing matching that keyword sold there - no warning needed.
+    # exist at that store (worth flagging). For Keyword/UPC mode, $0
+    # legitimately just means nothing matching sold there - no warning needed.
+    for store_key in selected_stores:
+        result = results.get(store_key)
+        if result is None:
+            missing_stores.append(connected_stores[store_key].get("name") or store_key)
+
     if search_mode == "Category" and missing_stores:
         st.warning(
             f"No category named \"{selected_category}\" found at: "
@@ -229,49 +232,56 @@ if st.button("Run report", type="primary"):
             f"means that store uses a slightly different category name."
         )
 
-    df = pd.DataFrame(rows)
-    total_row = pd.DataFrame([{
-        "Store": "TOTAL",
-        "Total Sales": df["Total Sales"].sum(),
-        "Units Sold": df["Units Sold"].sum(),
-    }])
-    df = pd.concat([df, total_row], ignore_index=True)
+    # Column widths shared by the header row and every store block below,
+    # so the numbers line up like a real table even though each store is
+    # its own bordered container (needed so its item-breakdown expander can
+    # sit directly attached underneath, instead of in a separate section).
+    col_widths = [3, 2, 2]
 
-    st.dataframe(
-        df,
-        column_config={
-            "Total Sales": st.column_config.NumberColumn(format="$%.2f"),
-            "Units Sold": st.column_config.NumberColumn(format="%.0f"),
-        },
-        hide_index=True,
-        use_container_width=True,
-    )
+    header_cols = st.columns(col_widths)
+    header_cols[0].markdown("**Store**")
+    header_cols[1].markdown("**Total Sales**")
+    header_cols[2].markdown("**Units Sold**")
 
-    st.subheader("Item breakdown by store")
     for store_key in selected_stores:
         store_name = connected_stores[store_key].get("name") or store_key
         result = results.get(store_key)
+        total = result["total"] if result else 0.0
+        quantity = result["quantity"] if result else 0.0
         items = result.get("items") if result else None
+        total_sales_sum += total
+        units_sold_sum += quantity
 
-        with st.expander(f"{store_name}"):
-            if not items:
-                st.caption("No matching items sold in this period.")
-                continue
+        with st.container(border=True):
+            row_cols = st.columns(col_widths)
+            row_cols[0].write(store_name)
+            row_cols[1].write(f"${total:,.2f}")
+            row_cols[2].write(f"{quantity:,.0f}")
 
-            item_df = pd.DataFrame([
-                {
-                    "Item": row["description"],
-                    "Units Sold": row["quantity"],
-                    "Total Sales": row["total"],
-                }
-                for row in items
-            ])
-            st.dataframe(
-                item_df,
-                column_config={
-                    "Total Sales": st.column_config.NumberColumn(format="$%.2f"),
-                    "Units Sold": st.column_config.NumberColumn(format="%.0f"),
-                },
-                hide_index=True,
-                use_container_width=True,
-            )
+            with st.expander("Item breakdown"):
+                if not items:
+                    st.caption("No matching items sold in this period.")
+                else:
+                    item_df = pd.DataFrame([
+                        {
+                            "Item": row["description"],
+                            "Units Sold": row["quantity"],
+                            "Total Sales": row["total"],
+                        }
+                        for row in items
+                    ])
+                    st.dataframe(
+                        item_df,
+                        column_config={
+                            "Total Sales": st.column_config.NumberColumn(format="$%.2f"),
+                            "Units Sold": st.column_config.NumberColumn(format="%.0f"),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+    with st.container(border=True):
+        total_cols = st.columns(col_widths)
+        total_cols[0].markdown("**TOTAL**")
+        total_cols[1].markdown(f"**${total_sales_sum:,.2f}**")
+        total_cols[2].markdown(f"**{units_sold_sum:,.0f}**")
