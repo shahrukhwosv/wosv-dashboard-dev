@@ -65,6 +65,11 @@ st.markdown(
         background: rgba(128, 128, 128, 0.1);
         border-bottom-color: currentColor;
     }
+
+    /* Cap the results table's width instead of letting it stretch across
+       the full page - it only has 3 columns of short values, so full
+       width just spreads everything out with a lot of empty gap. */
+    .st-key-cat_sales_table { max-width: 520px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -146,64 +151,65 @@ def render_report(report):
 
     col_widths = [3, 2, 2]
 
-    with st.container(key="cat_sales_header"):
-        header_cols = st.columns(col_widths)
-        if header_cols[0].button(f"Store{_sort_arrow('Store', sort_field, sort_dir)}", key="cat_sales_sort_store", use_container_width=True):
-            _toggle_sort("Store")
-            st.rerun()
-        if header_cols[1].button(f"Total Sales{_sort_arrow('Total Sales', sort_field, sort_dir)}", key="cat_sales_sort_total", use_container_width=True):
-            _toggle_sort("Total Sales")
-            st.rerun()
-        if header_cols[2].button(f"Units Sold{_sort_arrow('Units Sold', sort_field, sort_dir)}", key="cat_sales_sort_units", use_container_width=True):
-            _toggle_sort("Units Sold")
-            st.rerun()
+    with st.container(key="cat_sales_table"):
+        with st.container(key="cat_sales_header"):
+            header_cols = st.columns(col_widths)
+            if header_cols[0].button(f"Store{_sort_arrow('Store', sort_field, sort_dir)}", key="cat_sales_sort_store", use_container_width=True):
+                _toggle_sort("Store")
+                st.rerun()
+            if header_cols[1].button(f"Total Sales{_sort_arrow('Total Sales', sort_field, sort_dir)}", key="cat_sales_sort_total", use_container_width=True):
+                _toggle_sort("Total Sales")
+                st.rerun()
+            if header_cols[2].button(f"Units Sold{_sort_arrow('Units Sold', sort_field, sort_dir)}", key="cat_sales_sort_units", use_container_width=True):
+                _toggle_sort("Units Sold")
+                st.rerun()
 
-    total_sales_sum = 0.0
-    units_sold_sum = 0.0
+        total_sales_sum = 0.0
+        units_sold_sum = 0.0
 
-    for row in rows:
-        total_sales_sum += row["total"]
-        units_sold_sum += row["quantity"]
+        for row in rows:
+            total_sales_sum += row["total"]
+            units_sold_sum += row["quantity"]
 
-        row_cols = st.columns(col_widths)
-        row_cols[0].write(row["store_name"])
-        with row_cols[1]:
-            _right_align(f"${row['total']:,.2f}")
-        with row_cols[2]:
-            _right_align(f"{row['quantity']:,.0f}")
+            row_cols = st.columns(col_widths)
+            row_cols[0].write(row["store_name"])
+            with row_cols[1]:
+                _right_align(f"${row['total']:,.2f}")
+            with row_cols[2]:
+                _right_align(f"{row['quantity']:,.0f}")
 
-        item_count = row["item_count"]
-        with st.expander(f"Item breakdown ({item_count})"):
-            items = row["items"]
-            if not items:
-                st.caption("No matching items sold in this period.")
-            else:
-                item_df = pd.DataFrame([
-                    {
-                        "Item": item_row["description"],
-                        "Units Sold": item_row["quantity"],
-                        "Total Sales": item_row["total"],
-                    }
-                    for item_row in items
-                ])
-                st.dataframe(
-                    item_df,
-                    column_config={
-                        "Total Sales": st.column_config.NumberColumn(format="$%.2f"),
-                        "Units Sold": st.column_config.NumberColumn(format="%.0f"),
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                )
+            item_count = row["item_count"]
+            with st.expander(f"Item breakdown ({item_count})"):
+                items = row["items"]
+                if not items:
+                    st.caption("No matching items sold in this period.")
+                else:
+                    item_df = pd.DataFrame([
+                        {
+                            "Item": item_row["description"],
+                            "Units Sold": item_row["quantity"],
+                            "Total Sales": item_row["total"],
+                        }
+                        for item_row in items
+                    ])
+                    st.dataframe(
+                        item_df,
+                        column_config={
+                            "Total Sales": st.column_config.NumberColumn(format="$%.2f"),
+                            "Units Sold": st.column_config.NumberColumn(format="%.0f"),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                    )
 
-        st.divider()
+            st.divider()
 
-    total_cols = st.columns(col_widths)
-    total_cols[0].markdown("**TOTAL**")
-    with total_cols[1]:
-        _right_align(f"**${total_sales_sum:,.2f}**")
-    with total_cols[2]:
-        _right_align(f"**{units_sold_sum:,.0f}**")
+        total_cols = st.columns(col_widths)
+        total_cols[0].markdown("**TOTAL**")
+        with total_cols[1]:
+            _right_align(f"**${total_sales_sum:,.2f}**")
+        with total_cols[2]:
+            _right_align(f"**{units_sold_sum:,.0f}**")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
