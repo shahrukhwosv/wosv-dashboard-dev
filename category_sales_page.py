@@ -36,40 +36,102 @@ from store_access import get_accessible_store_keys
 
 st.title("Category Sales")
 
-# Tighten default Streamlit spacing between the per-store blocks and their
-# expanders below, restyle the sort-header buttons to look like plain table
-# headers instead of UI buttons, and add a thin divider between rows -
-# best-effort CSS against Streamlit's current internal class names (pinned
-# streamlit==1.56.0 in requirements.txt); if a future Streamlit upgrade
-# changes these class names this simply becomes a no-op, it won't break
-# the page. The header row is wrapped in a container with key="cat_sales_header"
-# so the button-flattening rule only touches those three buttons, not
-# "Run report" or anything elsewhere on the page.
+# Styling for the results section (stat cards, table header, pill buttons,
+# etc.) to visually match the reference "Rank Report" mockup the user
+# supplied - best-effort CSS against Streamlit's current internal class
+# names (pinned streamlit==1.56.0 in requirements.txt); if a future
+# Streamlit upgrade changes these class names this simply becomes a no-op,
+# it won't break the page. Search/filter controls above the results
+# (mode, category, stores, dates) are left as native Streamlit widgets -
+# only the results section below "Run report" is restyled.
 st.markdown(
     """
     <style>
     div[data-testid="stHorizontalBlock"] { margin-bottom: 0rem; gap: 0.5rem; }
-    div[data-testid="stExpander"] { margin-top: 0rem; margin-bottom: 0.4rem; }
     hr { margin: 0.2rem 0 !important; }
 
-    .st-key-cat_sales_header button {
-        background: transparent;
-        border: none;
-        border-bottom: 2px solid rgba(128, 128, 128, 0.4);
-        border-radius: 0;
+    /* Stat cards (Total Sales / Total Units Sold) */
+    .cat-stat-row {
+        display: flex;
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 0.75rem;
+    }
+    .cat-stat-card {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem 1.25rem;
+    }
+    .cat-stat-card + .cat-stat-card {
+        border-left: 1px solid rgba(128, 128, 128, 0.25);
+    }
+    .cat-icon-circle {
+        width: 42px;
+        height: 42px;
+        min-width: 42px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+    }
+    .cat-icon-red { background: rgba(239, 68, 68, 0.12); }
+    .cat-icon-blue { background: rgba(59, 130, 246, 0.12); }
+    .cat-stat-label {
+        font-size: 0.72rem;
         font-weight: 600;
-        padding: 0.2rem 0.4rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: rgba(100, 100, 100, 0.9);
+    }
+    .cat-stat-value { font-size: 1.4rem; font-weight: 700; line-height: 1.3; }
+    .cat-stat-sub { font-size: 0.78rem; color: rgba(120, 120, 120, 0.9); }
+
+    /* Table header capsule */
+    .st-key-cat_sales_header {
+        background: rgba(128, 128, 128, 0.06);
+        border-radius: 10px 10px 0 0;
+        padding: 0.5rem 0.75rem 0.5rem 0.75rem;
+    }
+    .st-key-cat_sales_header button {
+        background: transparent !important;
+        border: none !important;
+        font-weight: 600;
+        padding: 0.1rem 0.2rem;
         color: inherit;
     }
-    .st-key-cat_sales_header button:hover {
-        background: rgba(128, 128, 128, 0.1);
-        border-bottom-color: currentColor;
+    .st-key-cat_sales_header button:hover { text-decoration: underline; }
+
+    .cat-cell-store { display: flex; align-items: center; gap: 0.5rem; padding-top: 0.3rem; }
+    .cat-store-icon {
+        width: 30px;
+        height: 30px;
+        min-width: 30px;
+        border-radius: 50%;
+        background: rgba(128, 128, 128, 0.12);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+    }
+    .cat-cell-center { text-align: center; padding-top: 0.3rem; }
+    .cat-value-primary { font-weight: 600; font-size: 0.95rem; }
+    .cat-value-green { font-weight: 700; font-size: 0.95rem; color: #16a34a; }
+
+    .st-key-cat_sales_table .stButton button {
+        border-radius: 999px;
+        padding: 0.15rem 0.7rem;
+        font-size: 0.8rem;
+        font-weight: 500;
     }
 
     /* Cap the results table's width instead of letting it stretch across
-       the full page - it only has 3 columns of short values, so full
-       width just spreads everything out with a lot of empty gap. */
-    .st-key-cat_sales_table { max-width: 520px; }
+       the full page - it only has a few short columns, so full width
+       just spreads everything out with a lot of empty gap. */
+    .st-key-cat_sales_table { max-width: 640px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -103,9 +165,9 @@ def _right_align(text):
 
 def render_report(report):
     """Renders a previously-fetched report from session state. Kept
-    separate from the fetch so clicking a sort header (which triggers its
-    own script rerun) re-sorts and re-renders the cached results instead of
-    re-fetching from Lightspeed."""
+    separate from the fetch so clicking a sort header or a "Top Items"
+    pill (each triggers its own script rerun) re-renders the cached
+    results instead of re-fetching from Lightspeed."""
     results = report["results"]
     search_mode = report["search_mode"]
     selected_category = report["selected_category"]
@@ -133,6 +195,7 @@ def render_report(report):
         result = results.get(store_key)
         items = result.get("items") if result else None
         rows.append({
+            "store_key": store_key,
             "store_name": store_names[store_key],
             "total": result["total"] if result else 0.0,
             "quantity": result["quantity"] if result else 0.0,
@@ -149,7 +212,36 @@ def render_report(report):
     }[sort_field]
     rows.sort(key=sort_key, reverse=(sort_dir == "desc"))
 
-    col_widths = [3, 2, 2]
+    total_sales_sum = sum(row["total"] for row in rows)
+    units_sold_sum = sum(row["quantity"] for row in rows)
+
+    # Stat cards
+    st.markdown(
+        f"""
+        <div class="cat-stat-row">
+            <div class="cat-stat-card">
+                <div class="cat-icon-circle cat-icon-red">\U0001F6CD\uFE0F</div>
+                <div>
+                    <div class="cat-stat-label">Total Sales</div>
+                    <div class="cat-stat-value">${total_sales_sum:,.2f}</div>
+                    <div class="cat-stat-sub">Across {len(rows)} store{'s' if len(rows) != 1 else ''}</div>
+                </div>
+            </div>
+            <div class="cat-stat-card">
+                <div class="cat-icon-circle cat-icon-blue">\U0001F4E6</div>
+                <div>
+                    <div class="cat-stat-label">Total Units Sold</div>
+                    <div class="cat-stat-value">{units_sold_sum:,.0f}</div>
+                    <div class="cat-stat-sub">Across {len(rows)} store{'s' if len(rows) != 1 else ''}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_widths = [3, 2, 2, 2]
+    expanded = st.session_state.setdefault("cat_sales_expanded", set())
 
     with st.container(key="cat_sales_table"):
         with st.container(key="cat_sales_header"):
@@ -163,23 +255,35 @@ def render_report(report):
             if header_cols[2].button(f"Units Sold{_sort_arrow('Units Sold', sort_field, sort_dir)}", key="cat_sales_sort_units", use_container_width=True):
                 _toggle_sort("Units Sold")
                 st.rerun()
-
-        total_sales_sum = 0.0
-        units_sold_sum = 0.0
+            header_cols[3].markdown("<div class='cat-stat-label' style='padding-top: 0.4rem;'>Top Items</div>", unsafe_allow_html=True)
 
         for row in rows:
-            total_sales_sum += row["total"]
-            units_sold_sum += row["quantity"]
-
+            store_key = row["store_key"]
             row_cols = st.columns(col_widths)
-            row_cols[0].write(row["store_name"])
-            with row_cols[1]:
-                _right_align(f"${row['total']:,.2f}")
-            with row_cols[2]:
-                _right_align(f"{row['quantity']:,.0f}")
+            row_cols[0].markdown(
+                f"<div class='cat-cell-store'><div class='cat-store-icon'>\U0001F3EA</div>{row['store_name']}</div>",
+                unsafe_allow_html=True,
+            )
+            row_cols[1].markdown(
+                f"<div class='cat-cell-center cat-value-primary'>${row['total']:,.2f}</div>",
+                unsafe_allow_html=True,
+            )
+            row_cols[2].markdown(
+                f"<div class='cat-cell-center cat-value-green'>{row['quantity']:,.0f}</div>",
+                unsafe_allow_html=True,
+            )
+            with row_cols[3]:
+                is_open = store_key in expanded
+                chevron = "\u25be" if is_open else "\u203a"
+                label = f"{row['item_count']} items {chevron}"
+                if st.button(label, key=f"cat_sales_pill_{store_key}", use_container_width=True):
+                    if is_open:
+                        expanded.discard(store_key)
+                    else:
+                        expanded.add(store_key)
+                    st.rerun()
 
-            item_count = row["item_count"]
-            with st.expander(f"Item breakdown ({item_count})"):
+            if store_key in expanded:
                 items = row["items"]
                 if not items:
                     st.caption("No matching items sold in this period.")
@@ -203,13 +307,6 @@ def render_report(report):
                     )
 
             st.divider()
-
-        total_cols = st.columns(col_widths)
-        total_cols[0].markdown("**TOTAL**")
-        with total_cols[1]:
-            _right_align(f"**${total_sales_sum:,.2f}**")
-        with total_cols[2]:
-            _right_align(f"**{units_sold_sum:,.0f}**")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
