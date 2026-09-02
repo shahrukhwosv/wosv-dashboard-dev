@@ -1,10 +1,11 @@
 """
 Category Sales page (category_sales_page.py).
 
-Lets the user search sales two ways:
+Lets the user search sales three ways:
   - Category: pick a category (e.g. "Rolling Trays") from a dropdown
   - Keyword: type a keyword (e.g. "mug") and it matches any item whose
     description contains that word
+  - UPC: type an exact UPC and it matches the one item with that code
 
 Either way, pick a date range and which stores to include, and it shows
 how much each selected store sold for that search over that period.
@@ -95,6 +96,23 @@ def run_keyword_report(store_keys, keyword, start_date, end_date):
     return results
 
 
+def run_upc_report(store_keys, upc, start_date, end_date):
+    """Fetches UPC sales for each store in parallel."""
+    config = ls.load_config()
+    results = {}
+
+    def _fetch_one(store_key):
+        return store_key, ls.fetch_upc_sales(config, store_key, upc, start_date, end_date)
+
+    with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
+        futures = [pool.submit(_fetch_one, store_key) for store_key in store_keys]
+        for future in as_completed(futures):
+            store_key, result = future.result()
+            results[store_key] = result
+
+    return results
+
+
 config = ls.load_config()
 stores = config["stores"]
 
@@ -118,10 +136,11 @@ if not connected_stores:
 
 all_store_keys = list(connected_stores.keys())
 
-search_mode = st.radio("Search by", ["Category", "Keyword"], horizontal=True)
+search_mode = st.radio("Search by", ["Category", "Keyword", "UPC"], horizontal=True)
 
 selected_category = None
 keyword = None
+upc = None
 
 if search_mode == "Category":
     with st.spinner("Loading categories..."):
@@ -134,8 +153,10 @@ if search_mode == "Category":
         st.stop()
 
     selected_category = st.selectbox("Category", category_options)
-else:
+elif search_mode == "Keyword":
     keyword = st.text_input("Keyword", placeholder="e.g. mug").strip()
+else:
+    upc = st.text_input("UPC", placeholder="e.g. 012345678905").strip()
 
 store_scope = st.radio("Stores", ["All stores", "Choose stores"], horizontal=True)
 if store_scope == "All stores":
@@ -166,14 +187,20 @@ if search_mode == "Keyword" and not keyword:
     st.info("Enter a keyword to run the report.")
     st.stop()
 
+if search_mode == "UPC" and not upc:
+    st.info("Enter a UPC to run the report.")
+    st.stop()
+
 if st.button("Run report", type="primary"):
     with st.spinner(f"Fetching sales for {len(selected_stores)} store(s)..."):
         if search_mode == "Category":
             results = run_category_report(
                 selected_stores, categories_by_store, selected_category, start_date, end_date
             )
-        else:
+        elif search_mode == "Keyword":
             results = run_keyword_report(selected_stores, keyword, start_date, end_date)
+        else:
+            results = run_upc_report(selected_stores, upc, start_date, end_date)
 
     rows = []
     missing_stores = []

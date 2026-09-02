@@ -416,6 +416,39 @@ def fetch_items_by_keyword(config, store_key, keyword):
     return item_ids
 
 
+def fetch_items_by_upc(config, store_key, upc):
+    """Returns a set of itemIDs whose UPC exactly matches at one store.
+
+    Unlike keyword search, UPC is an exact-match lookup rather than a
+    substring match - a UPC either matches one item or it doesn't.
+    """
+    item_ids = set()
+    data = api_get(
+        config,
+        store_key,
+        "Item.json",
+        params={"limit": 100, "upc": upc},
+    )
+    seen_urls = set()
+
+    while True:
+        raw = data.get("Item", [])
+        if isinstance(raw, dict):
+            raw = [raw]
+        for item in raw:
+            item_id = str(item.get("itemID", ""))
+            if item_id:
+                item_ids.add(item_id)
+
+        next_url = (data.get("@attributes", {}) or {}).get("next")
+        if not next_url or next_url in seen_urls:
+            break
+        seen_urls.add(next_url)
+        data = api_get_full_url(config, store_key, next_url)
+
+    return item_ids
+
+
 ITEM_BATCH_SIZE = 50  # keeps the itemID filter well under typical URL length limits
 SALE_ID_BATCH_SIZE = 50  # same, for the follow-up Sale status lookup
 
@@ -560,6 +593,15 @@ def fetch_keyword_sales(config, store_key, keyword, start_date, end_date):
     See fetch_item_ids_sales for how the sales lookup itself works.
     """
     item_ids = fetch_items_by_keyword(config, store_key, keyword)
+    return fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date)
+
+
+def fetch_upc_sales(config, store_key, upc, start_date, end_date):
+    """Sums sales for one store, for the item matching the given UPC,
+    over a date range.
+    See fetch_item_ids_sales for how the sales lookup itself works.
+    """
+    item_ids = fetch_items_by_upc(config, store_key, upc)
     return fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date)
 
 
