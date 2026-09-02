@@ -18,6 +18,7 @@ and we'll adjust the field mapping in `normalize_sale()` below together.
 """
 import os
 import json
+import re
 import time
 from datetime import datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -385,10 +386,14 @@ def fetch_items_by_category(config, store_key, category_id):
 
 def fetch_items_by_keyword(config, store_key, keyword):
     """Returns {itemID: description} for items whose description contains
-    the given keyword (case-insensitive substring match) at one store.
+    the given keyword as a whole word (case-insensitive) at one store.
 
-    Uses Lightspeed's "~" LIKE operator with % wildcards on both sides, so
-    "mug" matches "Ceramic Mug", "Travel Mug 16oz", "Mugshot Ale Glass", etc.
+    Lightspeed's "~" LIKE operator only does substring matching, which
+    would match "raw" inside "strawberry" - so we still use it server-side
+    to narrow down candidates (cheap), then apply a word-boundary regex
+    client-side to drop the false-positive substring matches, so a search
+    for "raw" only matches things like "RAW King Size Slims", not
+    "Strawberry Vape Juice".
     """
     items = {}
     data = api_get(
@@ -398,6 +403,7 @@ def fetch_items_by_keyword(config, store_key, keyword):
         params={"limit": 100, "description": f"~,%{keyword}%"},
     )
     seen_urls = set()
+    word_pattern = re.compile(r"\b" + re.escape(keyword) + r"\b", re.IGNORECASE)
 
     while True:
         raw = data.get("Item", [])
@@ -405,8 +411,9 @@ def fetch_items_by_keyword(config, store_key, keyword):
             raw = [raw]
         for item in raw:
             item_id = str(item.get("itemID", ""))
-            if item_id:
-                items[item_id] = str(item.get("description", "") or "").strip() or item_id
+            description = str(item.get("description", "") or "").strip()
+            if item_id and word_pattern.search(description):
+                items[item_id] = description or item_id
 
         next_url = (data.get("@attributes", {}) or {}).get("next")
         if not next_url or next_url in seen_urls:

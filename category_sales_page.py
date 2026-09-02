@@ -3,8 +3,9 @@ Category Sales page (category_sales_page.py).
 
 Lets the user search sales three ways:
   - Category: pick a category (e.g. "Rolling Trays") from a dropdown
-  - Keyword: type a keyword (e.g. "mug") and it matches any item whose
-    description contains that word
+  - Keyword: type a keyword (e.g. "mug") and it matches any item with that
+    exact word in its description (whole-word match, not substring - "raw"
+    matches "RAW King Size Slims" but not "Strawberry Vape Juice")
   - UPC: type an exact UPC and it matches the one item with that code
 
 Either way, pick a date range and which stores to include, and it shows
@@ -433,7 +434,7 @@ if search_mode == "Category":
 
     selected_category = st.selectbox("Category", category_options)
 elif search_mode == "Keyword":
-    keyword = st.text_input("Keyword", placeholder="e.g. mug").strip()
+    keyword = st.text_input("Keyword", placeholder="e.g. raw", help="Matches whole words only, e.g. \"raw\" won't match \"strawberry\"").strip()
 else:
     upc = st.text_input("UPC", placeholder="e.g. 012345678905").strip()
 
