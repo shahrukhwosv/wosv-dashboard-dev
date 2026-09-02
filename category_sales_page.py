@@ -8,7 +8,9 @@ Lets the user search sales three ways:
   - UPC: type an exact UPC and it matches the one item with that code
 
 Either way, pick a date range and which stores to include, and it shows
-how much each selected store sold for that search over that period.
+how much each selected store sold for that search over that period, plus
+an expandable per-store breakdown of exactly which items contributed to
+that total.
 
 Respects per-user store access (see store_access.py): admins see every
 connected store, regular users only see stores explicitly granted to them -
@@ -244,3 +246,32 @@ if st.button("Run report", type="primary"):
         hide_index=True,
         use_container_width=True,
     )
+
+    st.subheader("Item breakdown by store")
+    for store_key in selected_stores:
+        store_name = connected_stores[store_key].get("name") or store_key
+        result = results.get(store_key)
+        items = result.get("items") if result else None
+
+        with st.expander(f"{store_name}"):
+            if not items:
+                st.caption("No matching items sold in this period.")
+                continue
+
+            item_df = pd.DataFrame([
+                {
+                    "Item": row["description"],
+                    "Units Sold": row["quantity"],
+                    "Total Sales": row["total"],
+                }
+                for row in items
+            ])
+            st.dataframe(
+                item_df,
+                column_config={
+                    "Total Sales": st.column_config.NumberColumn(format="$%.2f"),
+                    "Units Sold": st.column_config.NumberColumn(format="%.0f"),
+                },
+                hide_index=True,
+                use_container_width=True,
+            )

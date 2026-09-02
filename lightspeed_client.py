@@ -350,12 +350,13 @@ def fetch_categories(config, store_key):
 
 
 def fetch_items_by_category(config, store_key, category_id):
-    """Returns a set of itemIDs belonging to one category at one store.
+    """Returns {itemID: description} for items belonging to one category at
+    one store.
 
     Filters server-side via Lightspeed's categoryID query param so we don't
     have to page through the entire item catalog for every lookup.
     """
-    item_ids = set()
+    items = {}
     data = api_get(
         config,
         store_key,
@@ -371,7 +372,7 @@ def fetch_items_by_category(config, store_key, category_id):
         for item in raw:
             item_id = str(item.get("itemID", ""))
             if item_id:
-                item_ids.add(item_id)
+                items[item_id] = str(item.get("description", "") or "").strip() or item_id
 
         next_url = (data.get("@attributes", {}) or {}).get("next")
         if not next_url or next_url in seen_urls:
@@ -379,17 +380,17 @@ def fetch_items_by_category(config, store_key, category_id):
         seen_urls.add(next_url)
         data = api_get_full_url(config, store_key, next_url)
 
-    return item_ids
+    return items
 
 
 def fetch_items_by_keyword(config, store_key, keyword):
-    """Returns a set of itemIDs whose description contains the given keyword
-    (case-insensitive substring match) at one store.
+    """Returns {itemID: description} for items whose description contains
+    the given keyword (case-insensitive substring match) at one store.
 
     Uses Lightspeed's "~" LIKE operator with % wildcards on both sides, so
     "mug" matches "Ceramic Mug", "Travel Mug 16oz", "Mugshot Ale Glass", etc.
     """
-    item_ids = set()
+    items = {}
     data = api_get(
         config,
         store_key,
@@ -405,7 +406,7 @@ def fetch_items_by_keyword(config, store_key, keyword):
         for item in raw:
             item_id = str(item.get("itemID", ""))
             if item_id:
-                item_ids.add(item_id)
+                items[item_id] = str(item.get("description", "") or "").strip() or item_id
 
         next_url = (data.get("@attributes", {}) or {}).get("next")
         if not next_url or next_url in seen_urls:
@@ -413,16 +414,17 @@ def fetch_items_by_keyword(config, store_key, keyword):
         seen_urls.add(next_url)
         data = api_get_full_url(config, store_key, next_url)
 
-    return item_ids
+    return items
 
 
 def fetch_items_by_upc(config, store_key, upc):
-    """Returns a set of itemIDs whose UPC exactly matches at one store.
+    """Returns {itemID: description} for the item whose UPC exactly matches
+    at one store.
 
     Unlike keyword search, UPC is an exact-match lookup rather than a
     substring match - a UPC either matches one item or it doesn't.
     """
-    item_ids = set()
+    items = {}
     data = api_get(
         config,
         store_key,
@@ -438,7 +440,7 @@ def fetch_items_by_upc(config, store_key, upc):
         for item in raw:
             item_id = str(item.get("itemID", ""))
             if item_id:
-                item_ids.add(item_id)
+                items[item_id] = str(item.get("description", "") or "").strip() or item_id
 
         next_url = (data.get("@attributes", {}) or {}).get("next")
         if not next_url or next_url in seen_urls:
@@ -446,7 +448,7 @@ def fetch_items_by_upc(config, store_key, upc):
         seen_urls.add(next_url)
         data = api_get_full_url(config, store_key, next_url)
 
-    return item_ids
+    return items
 
 
 ITEM_BATCH_SIZE = 50  # keeps the itemID filter well under typical URL length limits
@@ -481,11 +483,11 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
     adjust the param format together - same as the note at the top of this
     file.
 
-    Returns {"total": float, "quantity": float}
+    Returns {"total": float, "quantity": float, "by_item": {itemID: {"total": float, "quantity": float}}}
     """
     item_ids = sorted(item_ids)
     if not item_ids:
-        return {"total": 0.0, "quantity": 0.0}
+        return {"total": 0.0, "quantity": 0.0, "by_item": {}}
 
     store_timezone = _get_store_timezone(store_key)
     start_local = datetime.combine(start_date, dt_time.min, tzinfo=store_timezone)
@@ -532,7 +534,7 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
             data = api_get_full_url(config, store_key, next_url)
 
     if not matched_lines:
-        return {"total": 0.0, "quantity": 0.0}
+        return {"total": 0.0, "quantity": 0.0, "by_item": {}}
 
     # Step 2: check completed/voided/archived only for the sales actually touched.
     valid_sale_ids = set()
@@ -567,42 +569,84 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
 
     total = 0.0
     quantity = 0.0
+    by_item = {}
     for line in matched_lines:
         if str(line.get("saleID", "") or "") not in valid_sale_ids:
             continue
         line_total = float(
             line.get("calcTotal", line.get("displayableSubtotal", 0)) or 0
         )
+        line_quantity = abs(float(line.get("unitQuantity", 1) or 1))
         total += line_total
-        quantity += abs(float(line.get("unitQuantity", 1) or 1))
+        quantity += line_quantity
 
-    return {"total": total, "quantity": quantity}
+        item_id = str(line.get("itemID", "") or "")
+        if item_id:
+            item_totals = by_item.setdefault(item_id, {"total": 0.0, "quantity": 0.0})
+            item_totals["total"] += line_total
+            item_totals["quantity"] += line_quantity
+
+    return {"total": total, "quantity": quantity, "by_item": by_item}
+
+
+def _build_item_breakdown(item_map, by_item):
+    """Merges an {itemID: description} map with a {itemID: {total, quantity}}
+    breakdown into a list of rows sorted by total sales descending. Items
+    that matched the search but had zero qualifying sales are left out.
+    """
+    rows = []
+    for item_id, totals in by_item.items():
+        rows.append({
+            "description": item_map.get(item_id, item_id),
+            "total": totals["total"],
+            "quantity": totals["quantity"],
+        })
+    rows.sort(key=lambda row: row["total"], reverse=True)
+    return rows
 
 
 def fetch_category_sales(config, store_key, category_id, start_date, end_date):
-    """Sums sales for one store/category over a date range.
+    """Sums sales for one store/category over a date range, including a
+    per-item breakdown of what contributed to the total.
     See fetch_item_ids_sales for how the sales lookup itself works.
     """
-    item_ids = fetch_items_by_category(config, store_key, category_id)
-    return fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date)
+    item_map = fetch_items_by_category(config, store_key, category_id)
+    result = fetch_item_ids_sales(config, store_key, item_map.keys(), start_date, end_date)
+    return {
+        "total": result["total"],
+        "quantity": result["quantity"],
+        "items": _build_item_breakdown(item_map, result["by_item"]),
+    }
 
 
 def fetch_keyword_sales(config, store_key, keyword, start_date, end_date):
     """Sums sales for one store, for all items whose description contains
-    the given keyword, over a date range.
+    the given keyword, over a date range, including a per-item breakdown of
+    what contributed to the total.
     See fetch_item_ids_sales for how the sales lookup itself works.
     """
-    item_ids = fetch_items_by_keyword(config, store_key, keyword)
-    return fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date)
+    item_map = fetch_items_by_keyword(config, store_key, keyword)
+    result = fetch_item_ids_sales(config, store_key, item_map.keys(), start_date, end_date)
+    return {
+        "total": result["total"],
+        "quantity": result["quantity"],
+        "items": _build_item_breakdown(item_map, result["by_item"]),
+    }
 
 
 def fetch_upc_sales(config, store_key, upc, start_date, end_date):
-    """Sums sales for one store, for the item matching the given UPC,
-    over a date range.
+    """Sums sales for one store, for the item matching the given UPC, over a
+    date range, including a per-item breakdown of what contributed to the
+    total.
     See fetch_item_ids_sales for how the sales lookup itself works.
     """
-    item_ids = fetch_items_by_upc(config, store_key, upc)
-    return fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date)
+    item_map = fetch_items_by_upc(config, store_key, upc)
+    result = fetch_item_ids_sales(config, store_key, item_map.keys(), start_date, end_date)
+    return {
+        "total": result["total"],
+        "quantity": result["quantity"],
+        "items": _build_item_breakdown(item_map, result["by_item"]),
+    }
 
 
 def api_get_full_url(config, store_key, url):
