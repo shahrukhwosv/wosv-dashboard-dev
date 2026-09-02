@@ -37,15 +37,34 @@ from store_access import get_accessible_store_keys
 st.title("Category Sales")
 
 # Tighten default Streamlit spacing between the per-store blocks and their
-# expanders below - best-effort CSS against Streamlit's current internal
-# class names (pinned streamlit==1.56.0 in requirements.txt); if a future
-# Streamlit upgrade changes these class names this simply becomes a no-op,
-# it won't break the page.
+# expanders below, restyle the sort-header buttons to look like plain table
+# headers instead of UI buttons, and add a thin divider between rows -
+# best-effort CSS against Streamlit's current internal class names (pinned
+# streamlit==1.56.0 in requirements.txt); if a future Streamlit upgrade
+# changes these class names this simply becomes a no-op, it won't break
+# the page. The header row is wrapped in a container with key="cat_sales_header"
+# so the button-flattening rule only touches those three buttons, not
+# "Run report" or anything elsewhere on the page.
 st.markdown(
     """
     <style>
     div[data-testid="stHorizontalBlock"] { margin-bottom: 0rem; gap: 0.5rem; }
-    div[data-testid="stExpander"] { margin-top: 0rem; margin-bottom: 0.5rem; }
+    div[data-testid="stExpander"] { margin-top: 0rem; margin-bottom: 0.4rem; }
+    hr { margin: 0.2rem 0 !important; }
+
+    .st-key-cat_sales_header button {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid rgba(128, 128, 128, 0.4);
+        border-radius: 0;
+        font-weight: 600;
+        padding: 0.2rem 0.4rem;
+        color: inherit;
+    }
+    .st-key-cat_sales_header button:hover {
+        background: rgba(128, 128, 128, 0.1);
+        border-bottom-color: currentColor;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -71,6 +90,10 @@ def _toggle_sort(field):
     else:
         st.session_state["cat_sales_sort_field"] = field
         st.session_state["cat_sales_sort_dir"] = SORT_DEFAULT_DIR[field]
+
+
+def _right_align(text):
+    st.markdown(f"<div style='text-align: right'>{text}</div>", unsafe_allow_html=True)
 
 
 def render_report(report):
@@ -103,11 +126,13 @@ def render_report(report):
     rows = []
     for store_key in selected_stores:
         result = results.get(store_key)
+        items = result.get("items") if result else None
         rows.append({
             "store_name": store_names[store_key],
             "total": result["total"] if result else 0.0,
             "quantity": result["quantity"] if result else 0.0,
-            "items": result.get("items") if result else None,
+            "items": items,
+            "item_count": len(items) if items else 0,
         })
 
     sort_field = st.session_state.get("cat_sales_sort_field", "Store")
@@ -121,16 +146,17 @@ def render_report(report):
 
     col_widths = [3, 2, 2]
 
-    header_cols = st.columns(col_widths)
-    if header_cols[0].button(f"Store{_sort_arrow('Store', sort_field, sort_dir)}", key="cat_sales_sort_store", use_container_width=True):
-        _toggle_sort("Store")
-        st.rerun()
-    if header_cols[1].button(f"Total Sales{_sort_arrow('Total Sales', sort_field, sort_dir)}", key="cat_sales_sort_total", use_container_width=True):
-        _toggle_sort("Total Sales")
-        st.rerun()
-    if header_cols[2].button(f"Units Sold{_sort_arrow('Units Sold', sort_field, sort_dir)}", key="cat_sales_sort_units", use_container_width=True):
-        _toggle_sort("Units Sold")
-        st.rerun()
+    with st.container(key="cat_sales_header"):
+        header_cols = st.columns(col_widths)
+        if header_cols[0].button(f"Store{_sort_arrow('Store', sort_field, sort_dir)}", key="cat_sales_sort_store", use_container_width=True):
+            _toggle_sort("Store")
+            st.rerun()
+        if header_cols[1].button(f"Total Sales{_sort_arrow('Total Sales', sort_field, sort_dir)}", key="cat_sales_sort_total", use_container_width=True):
+            _toggle_sort("Total Sales")
+            st.rerun()
+        if header_cols[2].button(f"Units Sold{_sort_arrow('Units Sold', sort_field, sort_dir)}", key="cat_sales_sort_units", use_container_width=True):
+            _toggle_sort("Units Sold")
+            st.rerun()
 
     total_sales_sum = 0.0
     units_sold_sum = 0.0
@@ -141,10 +167,13 @@ def render_report(report):
 
         row_cols = st.columns(col_widths)
         row_cols[0].write(row["store_name"])
-        row_cols[1].write(f"${row['total']:,.2f}")
-        row_cols[2].write(f"{row['quantity']:,.0f}")
+        with row_cols[1]:
+            _right_align(f"${row['total']:,.2f}")
+        with row_cols[2]:
+            _right_align(f"{row['quantity']:,.0f}")
 
-        with st.expander("Item breakdown"):
+        item_count = row["item_count"]
+        with st.expander(f"Item breakdown ({item_count})"):
             items = row["items"]
             if not items:
                 st.caption("No matching items sold in this period.")
@@ -167,10 +196,14 @@ def render_report(report):
                     use_container_width=True,
                 )
 
+        st.divider()
+
     total_cols = st.columns(col_widths)
     total_cols[0].markdown("**TOTAL**")
-    total_cols[1].markdown(f"**${total_sales_sum:,.2f}**")
-    total_cols[2].markdown(f"**{units_sold_sum:,.0f}**")
+    with total_cols[1]:
+        _right_align(f"**${total_sales_sum:,.2f}**")
+    with total_cols[2]:
+        _right_align(f"**{units_sold_sum:,.0f}**")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
