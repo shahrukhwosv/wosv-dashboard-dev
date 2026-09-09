@@ -384,58 +384,83 @@ def fetch_items_by_category(config, store_key, category_id):
     return items
 
 
+def _parse_word_terms(raw_value):
+    """Splits a comma-separated string into individual terms, each compiled
+    into a whole-word regex (also matching a trailing plural/possessive "s"
+    or "'s") - so "mama, pipe" becomes patterns for "mama" and "pipe"
+    separately, matched as OR (any term present is a match).
+    """
+    if not raw_value:
+        return []
+    terms = [t.strip() for t in raw_value.split(",")]
+    return [
+        re.compile(r"\b" + re.escape(t) + r"(?:'s|s)?\b", re.IGNORECASE)
+        for t in terms if t
+    ]
+
+
 def fetch_items_by_keyword(config, store_key, keyword, exclude_keyword=None):
     """Returns {itemID: description} for items whose description contains
-    the given keyword as a whole word (case-insensitive) at one store,
-    also matching a trailing plural/possessive "s" or "'s" so a search for
-    "mama" catches "Mama's Cannabis Infused" and "Mamas Edibles" too.
+    any of the given keyword term(s) as a whole word (case-insensitive) at
+    one store, also matching a trailing plural/possessive "s" or "'s" so a
+    search for "mama" catches "Mama's Cannabis Infused" and "Mamas
+    Edibles" too. Both keyword and exclude_keyword accept multiple terms
+    separated by commas (e.g. "mama, pipe") - an item matches if it
+    contains ANY keyword term and is dropped if it contains ANY exclude
+    term.
 
     If exclude_keyword is given, drops any item whose description also
-    contains that word (same whole-word/plural matching rules) - e.g.
-    keyword="pipe", exclude_keyword="water" keeps "Glass Hand Pipe" but
-    drops "18in Water Pipe".
+    contains one of those word(s) (same whole-word/plural matching rules) -
+    e.g. keyword="pipe", exclude_keyword="water" keeps "Glass Hand Pipe"
+    but drops "18in Water Pipe".
 
     Lightspeed's "~" LIKE operator only does substring matching, which
     would match "raw" inside "strawberry" - so we still use it server-side
-    to narrow down candidates (cheap), then apply a word-boundary regex
-    client-side to drop the false-positive substring matches. The boundary
-    is strict at the *start* of the word (so "raw" still won't match
-    inside "strawberry" or "Crawford") but allows an optional trailing
-    "s"/"'s" before the closing boundary (so "mama" also matches "mamas"
-    and "mama's").
+    to narrow down candidates (cheap, run once per keyword term), then
+    apply a word-boundary regex client-side to drop the false-positive
+    substring matches. The boundary is strict at the *start* of the word
+    (so "raw" still won't match inside "strawberry" or "Crawford") but
+    allows an optional trailing "s"/"'s" before the closing boundary (so
+    "mama" also matches "mamas" and "mama's").
     """
+    keyword_patterns_by_term = []
+    for term in (t.strip() for t in keyword.split(",")):
+        if not term:
+            continue
+        keyword_patterns_by_term.append((
+            term,
+            re.compile(r"\b" + re.escape(term) + r"(?:'s|s)?\b", re.IGNORECASE),
+        ))
+    exclude_patterns = _parse_word_terms(exclude_keyword)
+
     items = {}
-    data = api_get(
-        config,
-        store_key,
-        "Item.json",
-        params={"limit": 100, "description": f"~,%{keyword}%"},
-    )
-    seen_urls = set()
-    word_pattern = re.compile(r"\b" + re.escape(keyword) + r"(?:'s|s)?\b", re.IGNORECASE)
-    exclude_pattern = (
-        re.compile(r"\b" + re.escape(exclude_keyword) + r"(?:'s|s)?\b", re.IGNORECASE)
-        if exclude_keyword else None
-    )
+    for term, word_pattern in keyword_patterns_by_term:
+        data = api_get(
+            config,
+            store_key,
+            "Item.json",
+            params={"limit": 100, "description": f"~,%{term}%"},
+        )
+        seen_urls = set()
 
-    while True:
-        raw = data.get("Item", [])
-        if isinstance(raw, dict):
-            raw = [raw]
-        for item in raw:
-            item_id = str(item.get("itemID", ""))
-            description = str(item.get("description", "") or "").strip()
-            if not item_id or not word_pattern.search(description):
-                continue
-            if exclude_pattern and exclude_pattern.search(description):
-                continue
-            items[item_id] = description or item_id
+        while True:
+            raw = data.get("Item", [])
+            if isinstance(raw, dict):
+                raw = [raw]
+            for item in raw:
+                item_id = str(item.get("itemID", ""))
+                description = str(item.get("description", "") or "").strip()
+                if not item_id or not word_pattern.search(description):
+                    continue
+                if any(ep.search(description) for ep in exclude_patterns):
+                    continue
+                items[item_id] = description or item_id
 
-        next_url = (data.get("@attributes", {}) or {}).get("next")
-        if not next_url or next_url in seen_urls:
-            break
-        seen_urls.add(next_url)
-        data = api_get_full_url(config, store_key, next_url)
+            next_url = (data.get("@attributes", {}) or {}).get("next")
+            if not next_url or next_url in seen_urls:
+                break
+            seen_urls.add(next_url)
+            data = api_get_full_url(config, store_key, next_url)
 
     return items
 
@@ -644,8 +669,9 @@ def fetch_category_sales(config, store_key, category_id, start_date, end_date):
 
 def fetch_keyword_sales(config, store_key, keyword, start_date, end_date, exclude_keyword=None):
     """Sums sales for one store, for all items whose description contains
-    the given keyword (optionally excluding items that also contain
-    exclude_keyword), over a date range, including a per-item breakdown of
+    any of the given keyword term(s) (comma-separated for multiple, OR
+    matched), optionally excluding items that also contain any of the
+    exclude term(s), over a date range, including a per-item breakdown of
     what contributed to the total.
     See fetch_item_ids_sales for how the sales lookup itself works.
     """

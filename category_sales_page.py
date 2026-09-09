@@ -5,10 +5,13 @@ Lets the user search sales three ways:
   - Category: pick a category (e.g. "Rolling Trays") from a dropdown
   - Keyword: type a keyword (e.g. "mug") and it matches any item with that
     exact word in its description (whole-word match, not substring - "raw"
-    matches "RAW King Size Slims" but not "Strawberry Vape Juice"). An
-    optional "Exclude keyword" drops any item that also contains that word
-    (e.g. keyword "pipe" + exclude "water" keeps "Glass Hand Pipe" but
-    drops "18in Water Pipe")
+    matches "RAW King Size Slims" but not "Strawberry Vape Juice").
+    Comma-separate multiple words to match any of them (e.g. "mama, pipe").
+    An optional "Exclude keyword(s)" field (also comma-separatable) drops
+    any item that also contains one of those words (e.g. keyword "pipe" +
+    exclude "water" keeps "Glass Hand Pipe" but drops "18in Water Pipe").
+    A quick preset button is available for the common "Mama (excl. Pacha)"
+    search.
   - UPC: type an exact UPC and it matches the one item with that code
 
 Either way, pick a date range (or use the This Month/Last Month/This Year
@@ -441,18 +444,31 @@ if search_mode == "Category":
 
     selected_category = st.selectbox("Category", category_options)
 elif search_mode == "Keyword":
+    KEYWORD_PRESETS = {
+        "Mama (excl. Pacha)": ("mama", "pacha"),
+    }
+    preset_button_cols = st.columns(len(KEYWORD_PRESETS) + 3)  # extra room so buttons don't stretch full width
+    for col, (preset_label, (preset_keyword, preset_exclude)) in zip(preset_button_cols, KEYWORD_PRESETS.items()):
+        if col.button(preset_label, key=f"cat_sales_preset_{preset_label}"):
+            st.session_state["cat_sales_keyword"] = preset_keyword
+            st.session_state["cat_sales_exclude"] = preset_exclude
+
     keyword_cols = st.columns(2)
     with keyword_cols[0]:
         keyword = st.text_input(
             "Keyword",
-            placeholder="e.g. raw",
-            help="Matches whole words only, e.g. \"raw\" won't match \"strawberry\"",
+            value=st.session_state.get("cat_sales_keyword", ""),
+            placeholder="e.g. mama, pipe",
+            help="Comma-separate multiple words to match any of them. Whole-word match only (plus plural/possessive) - \"raw\" won't match \"strawberry\"",
+            key="cat_sales_keyword",
         ).strip()
     with keyword_cols[1]:
         exclude_keyword = st.text_input(
-            "Exclude keyword (optional)",
-            placeholder="e.g. water",
-            help="Drops any item that also has this word, e.g. exclude \"water\" to keep \"pipe\" from matching \"water pipe\"",
+            "Exclude keyword(s) (optional)",
+            value=st.session_state.get("cat_sales_exclude", ""),
+            placeholder="e.g. water, pacha",
+            help="Comma-separate multiple words - drops any item containing any of them, e.g. exclude \"water\" to keep \"pipe\" from matching \"water pipe\"",
+            key="cat_sales_exclude",
         ).strip() or None
 else:
     upc = st.text_input("UPC", placeholder="e.g. 012345678905").strip()
