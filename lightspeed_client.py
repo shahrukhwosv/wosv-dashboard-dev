@@ -532,6 +532,10 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
     file.
 
     Returns {"total": float, "quantity": float, "by_item": {itemID: {"total": float, "quantity": float}}}
+
+    "total" is unitPrice x unitQuantity (the item's listed/catalog price),
+    not the post-discount amount actually collected - see the note above
+    the total calculation below for why.
     """
     item_ids = sorted(item_ids)
     if not item_ids:
@@ -621,10 +625,15 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
     for line in matched_lines:
         if str(line.get("saleID", "") or "") not in valid_sale_ids:
             continue
-        line_total = float(
-            line.get("calcTotal", line.get("displayableSubtotal", 0)) or 0
-        )
         line_quantity = abs(float(line.get("unitQuantity", 1) or 1))
+        # Uses the item's listed unitPrice x quantity (catalog value),
+        # ignoring any line-level discount - so a $8.99 item always counts
+        # as $8.99 sold, even if it was discounted to $6.99 at checkout.
+        # This intentionally diverges from actual register revenue on
+        # discounted sales; see calcTotal (post-discount) if that's ever
+        # needed instead.
+        unit_price = float(line.get("unitPrice", 0) or 0)
+        line_total = unit_price * line_quantity
         total += line_total
         quantity += line_quantity
 
