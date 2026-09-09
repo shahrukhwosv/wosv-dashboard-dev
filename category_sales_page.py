@@ -253,6 +253,8 @@ def render_report(report):
         unsafe_allow_html=True,
     )
 
+    _render_trend_section(report, results, selected_stores)
+
     col_widths = [3, 2, 2, 2]
     expanded = st.session_state.setdefault("cat_sales_expanded", set())
 
@@ -320,8 +322,6 @@ def render_report(report):
                     )
 
             st.divider()
-
-    _render_trend_section(report, results, selected_stores)
 
 
 def _build_trend_dataframe(combined_by_day, start_date, end_date):
