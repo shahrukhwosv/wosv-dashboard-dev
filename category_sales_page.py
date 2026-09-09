@@ -19,8 +19,9 @@ shortcuts) and which stores to include, and it shows how much each
 selected store sold for that search over that period, with each store's
 row expandable to show exactly which items (alphabetically) contributed
 to that total. A "See Trend" toggle shows a combined (all selected
-stores summed together, not per-store) day-by-day line chart of either
-Total Sales or Units Sold across the selected date range.
+stores summed together, not per-store) Units Sold line chart - bucketed
+by day for ranges of 30 days or fewer, or by 7-day chunks (labeled by
+each chunk's start date) for longer ranges.
 
 Respects per-user store access (see store_access.py): admins see every
 connected store, regular users only see stores explicitly granted to them -
@@ -323,11 +324,39 @@ def render_report(report):
     _render_trend_section(report, results, selected_stores)
 
 
+def _build_trend_dataframe(combined_by_day, start_date, end_date):
+    """Builds a Units Sold trend DataFrame, indexed by whole-day category
+    labels (never fractional/sub-day ticks) rather than a continuous date
+    axis. 30 days or fewer buckets by day; longer ranges bucket into 7-day
+    chunks starting from start_date, labeled by each chunk's start date."""
+    total_days = (end_date - start_date).days + 1
+    all_days = [start_date + timedelta(days=i) for i in range(total_days)]
+
+    labels = []
+    values = []
+    if total_days <= 30:
+        for day in all_days:
+            labels.append(day.strftime("%b %d"))
+            values.append(combined_by_day.get(day.isoformat(), {}).get("quantity", 0.0))
+    else:
+        for i in range(0, total_days, 7):
+            chunk = all_days[i:i + 7]
+            labels.append(chunk[0].strftime("%b %d"))
+            values.append(sum(
+                combined_by_day.get(day.isoformat(), {}).get("quantity", 0.0)
+                for day in chunk
+            ))
+
+    return pd.DataFrame({"Units Sold": values}, index=pd.Index(labels, name="Date"))
+
+
 def _render_trend_section(report, results, selected_stores):
-    """Combined (all-stores) daily trend line for the current search,
-    toggled via a 'See Trend' button. Independent of the table's sort/
-    expand state - it always covers every selected store and the full
-    selected date range, regardless of table sorting."""
+    """Combined (all-stores) trend line for the current search, toggled via
+    a 'See Trend' button. Independent of the table's sort/expand state -
+    it always covers every selected store and the full selected date
+    range, regardless of table sorting. Buckets by day for ranges of 30
+    days or fewer, otherwise by 7-day chunks from the start date - see
+    _build_trend_dataframe."""
     show_trend = st.session_state.get("cat_sales_show_trend", False)
     if st.button("See Trend" if not show_trend else "Hide Trend", key="cat_sales_trend_toggle"):
         st.session_state["cat_sales_show_trend"] = not show_trend
@@ -346,20 +375,7 @@ def _render_trend_section(report, results, selected_stores):
             bucket["total"] += day_totals["total"]
             bucket["quantity"] += day_totals["quantity"]
 
-    start_date = report["start_date"]
-    end_date = report["end_date"]
-    all_days = pd.date_range(start_date, end_date, freq="D")
-
-    metric = st.radio(
-        "Trend metric", ["Total Sales", "Units Sold"], horizontal=True, key="cat_sales_trend_metric"
-    )
-    field = "total" if metric == "Total Sales" else "quantity"
-
-    trend_df = pd.DataFrame({
-        "Date": all_days,
-        metric: [combined_by_day.get(day.date().isoformat(), {}).get(field, 0.0) for day in all_days],
-    }).set_index("Date")
-
+    trend_df = _build_trend_dataframe(combined_by_day, report["start_date"], report["end_date"])
     st.line_chart(trend_df, use_container_width=True)
 
 
