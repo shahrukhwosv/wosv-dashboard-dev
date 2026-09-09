@@ -531,15 +531,17 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
     adjust the param format together - same as the note at the top of this
     file.
 
-    Returns {"total": float, "quantity": float, "by_item": {itemID: {"total": float, "quantity": float}}}
+    Returns {"total": float, "quantity": float, "by_item": {itemID: {"total": float, "quantity": float}}, "by_day": {"YYYY-MM-DD": {"total": float, "quantity": float}}}
 
     "total" is unitPrice x unitQuantity (the item's listed/catalog price),
     not the post-discount amount actually collected - see the note above
-    the total calculation below for why.
+    the total calculation below for why. "by_day" buckets each line by the
+    store's own local calendar date (from the line's own timeStamp,
+    converted via this store's timezone), for trend charting.
     """
     item_ids = sorted(item_ids)
     if not item_ids:
-        return {"total": 0.0, "quantity": 0.0, "by_item": {}}
+        return {"total": 0.0, "quantity": 0.0, "by_item": {}, "by_day": {}}
 
     store_timezone = _get_store_timezone(store_key)
     start_local = datetime.combine(start_date, dt_time.min, tzinfo=store_timezone)
@@ -586,7 +588,7 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
             data = api_get_full_url(config, store_key, next_url)
 
     if not matched_lines:
-        return {"total": 0.0, "quantity": 0.0, "by_item": {}}
+        return {"total": 0.0, "quantity": 0.0, "by_item": {}, "by_day": {}}
 
     # Step 2: check completed/voided/archived only for the sales actually touched.
     valid_sale_ids = set()
@@ -622,6 +624,7 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
     total = 0.0
     quantity = 0.0
     by_item = {}
+    by_day = {}
     for line in matched_lines:
         if str(line.get("saleID", "") or "") not in valid_sale_ids:
             continue
@@ -643,7 +646,23 @@ def fetch_item_ids_sales(config, store_key, item_ids, start_date, end_date):
             item_totals["total"] += line_total
             item_totals["quantity"] += line_quantity
 
-    return {"total": total, "quantity": quantity, "by_item": by_item}
+        # Bucket by this store's own local calendar date, not UTC, so a
+        # sale at 11pm local time doesn't get attributed to the next day.
+        ts_raw = line.get("timeStamp")
+        if ts_raw:
+            try:
+                line_dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                if line_dt.tzinfo is None:
+                    line_dt = line_dt.replace(tzinfo=timezone.utc)
+                day_key = line_dt.astimezone(store_timezone).date().isoformat()
+            except ValueError:
+                day_key = None
+            if day_key:
+                day_totals = by_day.setdefault(day_key, {"total": 0.0, "quantity": 0.0})
+                day_totals["total"] += line_total
+                day_totals["quantity"] += line_quantity
+
+    return {"total": total, "quantity": quantity, "by_item": by_item, "by_day": by_day}
 
 
 def _build_item_breakdown(item_map, by_item):
@@ -673,6 +692,7 @@ def fetch_category_sales(config, store_key, category_id, start_date, end_date):
         "total": result["total"],
         "quantity": result["quantity"],
         "items": _build_item_breakdown(item_map, result["by_item"]),
+        "by_day": result["by_day"],
     }
 
 
@@ -690,6 +710,7 @@ def fetch_keyword_sales(config, store_key, keyword, start_date, end_date, exclud
         "total": result["total"],
         "quantity": result["quantity"],
         "items": _build_item_breakdown(item_map, result["by_item"]),
+        "by_day": result["by_day"],
     }
 
 
@@ -705,6 +726,7 @@ def fetch_upc_sales(config, store_key, upc, start_date, end_date):
         "total": result["total"],
         "quantity": result["quantity"],
         "items": _build_item_breakdown(item_map, result["by_item"]),
+        "by_day": result["by_day"],
     }
 
 

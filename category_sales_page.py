@@ -18,7 +18,9 @@ Either way, pick a date range (or use the This Month/Last Month/This Year
 shortcuts) and which stores to include, and it shows how much each
 selected store sold for that search over that period, with each store's
 row expandable to show exactly which items (alphabetically) contributed
-to that total.
+to that total. A "See Trend" toggle shows a combined (all selected
+stores summed together, not per-store) day-by-day line chart of either
+Total Sales or Units Sold across the selected date range.
 
 Respects per-user store access (see store_access.py): admins see every
 connected store, regular users only see stores explicitly granted to them -
@@ -318,6 +320,48 @@ def render_report(report):
 
             st.divider()
 
+    _render_trend_section(report, results, selected_stores)
+
+
+def _render_trend_section(report, results, selected_stores):
+    """Combined (all-stores) daily trend line for the current search,
+    toggled via a 'See Trend' button. Independent of the table's sort/
+    expand state - it always covers every selected store and the full
+    selected date range, regardless of table sorting."""
+    show_trend = st.session_state.get("cat_sales_show_trend", False)
+    if st.button("See Trend" if not show_trend else "Hide Trend", key="cat_sales_trend_toggle"):
+        st.session_state["cat_sales_show_trend"] = not show_trend
+        st.rerun()
+
+    if not show_trend:
+        return
+
+    combined_by_day = {}
+    for store_key in selected_stores:
+        result = results.get(store_key)
+        if not result:
+            continue
+        for day_key, day_totals in result.get("by_day", {}).items():
+            bucket = combined_by_day.setdefault(day_key, {"total": 0.0, "quantity": 0.0})
+            bucket["total"] += day_totals["total"]
+            bucket["quantity"] += day_totals["quantity"]
+
+    start_date = report["start_date"]
+    end_date = report["end_date"]
+    all_days = pd.date_range(start_date, end_date, freq="D")
+
+    metric = st.radio(
+        "Trend metric", ["Total Sales", "Units Sold"], horizontal=True, key="cat_sales_trend_metric"
+    )
+    field = "total" if metric == "Total Sales" else "quantity"
+
+    trend_df = pd.DataFrame({
+        "Date": all_days,
+        metric: [combined_by_day.get(day.date().isoformat(), {}).get(field, 0.0) for day in all_days],
+    }).set_index("Date")
+
+    st.line_chart(trend_df, use_container_width=True)
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_categories_by_store(store_keys):
@@ -559,6 +603,8 @@ if st.button("Run report", type="primary"):
             for store_key in selected_stores
         },
         "selected_stores": selected_stores,
+        "start_date": start_date,
+        "end_date": end_date,
     }
 
 report = st.session_state.get("cat_sales_report")
