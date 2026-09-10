@@ -9,10 +9,10 @@ only appear in the sidebar for admin accounts.
 Run with:  streamlit run app.py
 
 The actual page content lives in commission_page.py, reconciliation_page.py,
-category_sales_page.py, add_store_page.py, and manage_users_page.py.
-dashboard_page.py, pace_calculator_page.py, and touch_tell_page.py still
-exist in the repo but are TEMPORARILY not linked in the sidebar - re-add
-them to the `pages` list below when ready.
+touch_tell_page.py, pace_calculator_page.py, category_sales_page.py,
+monthly_reports_page.py, add_store_page.py, and manage_users_page.py.
+dashboard_page.py still exists in the repo but is TEMPORARILY not linked
+in the sidebar - re-add it to the `pages` list below when ready.
 
 NOTE: pace_calculator_page.py has its own separate simple password gate
 built in (see PACE_CALCULATOR_PASSWORD) - unrelated to the login system
@@ -40,14 +40,26 @@ commissions_page = st.Page(
 transactions_page = st.Page(
     "reconciliation_page.py", title="Transactions", icon="💳"
 )
+touch_tell_page = st.Page(
+    "touch_tell_page.py", title="Touch Tell", icon="📦"
+)
+pace_calculator_page = st.Page(
+    "pace_calculator_page.py", title="Pace Calculator", icon="📈"
+)
 category_sales_page = st.Page(
     "category_sales_page.py", title="Category Sales", icon="🔍"
+)
+monthly_reports_page = st.Page(
+    "monthly_reports_page.py", title="Monthly Reports", icon="🗂️"
 )
 
 pages = [
     commissions_page,
     transactions_page,
+    touch_tell_page,
+    pace_calculator_page,
     category_sales_page,
+    monthly_reports_page,
 ]
 
 if st.session_state.get("is_admin"):

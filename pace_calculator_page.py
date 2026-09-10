@@ -29,18 +29,19 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from lightspeed_client import load_config
-from store_access import get_accessible_store_keys
+from store_access import get_page_store_keys, PACE_CALCULATOR_STORES_LIST
 from sales_pace import compute_pace, month_actual_total, read_daily_log, update_daily_log
 from pace_pdf_report import MONTH_NAMES, build_monthly_pdf
 
 st.title("Sales Pace Calculator")
 
 config = load_config()
-if st.session_state.get("is_admin"):
-    store_keys = list(config["stores"].keys())
-else:
-    accessible_keys = get_accessible_store_keys(st.session_state.user_id)
-    store_keys = [k for k in config["stores"].keys() if k in accessible_keys]
+store_keys = list(get_page_store_keys(
+    config,
+    list_name=PACE_CALCULATOR_STORES_LIST,
+    default_keys=list(config["stores"].keys()),  # matches today's behavior until an admin edits the list
+    require_connected=False,  # matches today's behavior: shows every store key in config, connected or not
+))
 store_names = {
     key: config["stores"][key].get("name", key) for key in store_keys
 }

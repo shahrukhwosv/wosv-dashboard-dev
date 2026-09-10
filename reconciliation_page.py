@@ -15,7 +15,7 @@ import streamlit as st
 import pandas as pd
 
 from lightspeed_client import load_config, fetch_employees
-from store_access import get_accessible_store_keys
+from store_access import get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
 from reconciliation_lightspeed import fetch_card_sales
 from valor_parser import parse_valor_csv
 from reconciliation_engine import reconcile
@@ -57,19 +57,13 @@ with st.expander("🔧 Timezone diagnostics (temporary - for debugging)"):
 config = load_config()
 stores = config["stores"]
 
-if st.session_state.get("is_admin"):
-    connected_stores = {
-        key: val for key, val in stores.items()
-        if val.get("refresh_token") and not val.get("pace_only")
-    }
-else:
-    accessible_keys = get_accessible_store_keys(st.session_state.user_id)
-    connected_stores = {
-        key: val for key, val in stores.items()
-        if val.get("refresh_token")
-        and not val.get("pace_only")
-        and key in accessible_keys
-    }
+standard_keys = get_page_store_keys(
+    config, list_name=STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS
+)
+connected_stores = {
+    key: val for key, val in stores.items()
+    if key in standard_keys and not val.get("pace_only")
+}
 
 if not connected_stores:
     st.info('No stores added. Click "Add a Store" in the menu to connect new stores.')

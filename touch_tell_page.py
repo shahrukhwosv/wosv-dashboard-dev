@@ -19,6 +19,7 @@ from lightspeed_po import fetch_purchase_orders_for_vendor
 from sheets_client import read_invoice_rows, write_ready_to_pay, write_paid
 from touch_tell_matching import match_store_invoices
 from touch_tell_pdf import build_ready_to_pay_pdf
+from store_access import get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
 
 st.title("Touch Tell Invoice Matching")
 st.caption(
@@ -40,13 +41,19 @@ if sheet_id == "PASTE_YOUR_SHEET_ID_HERE":
     st.stop()
 
 ls_config = load_config()
-connected_store_keys = {
-    key for key, val in ls_config["stores"].items() if val.get("refresh_token")
-}
+connected_store_keys = get_page_store_keys(
+    ls_config, list_name=STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS
+)
+
+# Only offer sheet store names this user can actually see (previously
+# offered every store in touch_tell_config.json regardless of access).
+visible_sheet_names = sorted(
+    name for name, key in store_sheet_to_key.items() if key in connected_store_keys
+)
 
 store_choice = st.selectbox(
     "Which store(s) to check?",
-    ["All stores"] + sorted(store_sheet_to_key.keys()),
+    ["All stores"] + visible_sheet_names,
 )
 
 dry_run = st.checkbox(
@@ -92,7 +99,7 @@ if run:
 
         if store_key not in connected_store_keys:
             for row in rows:
-                all_exceptions.append((row, f"'{store_name}' ({store_key}) isn't connected to Lightspeed yet."))
+                all_exceptions.append((row, f"'{store_name}' ({store_key}) isn't connected yet, or isn't in your accessible stores."))
             continue
 
         with st.spinner(f"Pulling {store_name}'s purchase orders..."):

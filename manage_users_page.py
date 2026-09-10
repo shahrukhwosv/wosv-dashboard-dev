@@ -8,7 +8,15 @@ import streamlit as st
 
 from auth import create_user, list_users, delete_user
 from lightspeed_client import load_config
-from store_access import get_accessible_store_keys, set_user_access
+from store_access import (
+    get_accessible_store_keys,
+    set_user_access,
+    get_store_list,
+    set_store_list,
+    STANDARD_STORES_LIST,
+    PACE_CALCULATOR_STORES_LIST,
+    DEFAULT_STANDARD_STORE_KEYS,
+)
 
 st.title("Manage Users")
 
@@ -70,6 +78,61 @@ else:
     if st.button("Save access", type="primary"):
         set_user_access(selected_user_id, set(selected_keys))
         st.success(f"Updated access for {selected_username}.")
+        st.rerun()
+
+st.divider()
+st.subheader("Standard Stores list")
+st.caption(
+    "Commissions, Transactions, Touch Tell, and Monthly Reports only show "
+    "stores from this list (further narrowed by each user's own access "
+    "above) - Category Sales ignores this and always shows everything a "
+    "user/admin can otherwise see."
+)
+if not all_stores:
+    st.write("No stores connected yet - connect some from the Add Store page first.")
+else:
+    store_keys_sorted = sorted(all_stores.keys(), key=lambda k: all_stores[k])
+    current_standard = get_store_list(STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS)
+    default_standard = [k for k in store_keys_sorted if k in current_standard]
+
+    selected_standard_keys = st.multiselect(
+        "Stores included in the Standard Stores list",
+        options=store_keys_sorted,
+        default=default_standard,
+        format_func=lambda key: all_stores.get(key, key),
+        key="standard_stores_multiselect",
+    )
+
+    if st.button("Save Standard Stores list", type="primary", key="save_standard_stores"):
+        set_store_list(STANDARD_STORES_LIST, set(selected_standard_keys))
+        st.success("Updated the Standard Stores list.")
+        st.rerun()
+
+st.divider()
+st.subheader("Pace Calculator Stores list")
+st.caption(
+    "Which stores show up on the Pace Calculator page. Defaults to every "
+    "connected store (its current behavior) until saved here for the "
+    "first time."
+)
+if not all_stores:
+    st.write("No stores connected yet - connect some from the Add Store page first.")
+else:
+    store_keys_sorted = sorted(all_stores.keys(), key=lambda k: all_stores[k])
+    current_pace = get_store_list(PACE_CALCULATOR_STORES_LIST, default_keys=list(config["stores"].keys()))
+    default_pace = [k for k in store_keys_sorted if k in current_pace]
+
+    selected_pace_keys = st.multiselect(
+        "Stores included on the Pace Calculator page",
+        options=store_keys_sorted,
+        default=default_pace,
+        format_func=lambda key: all_stores.get(key, key),
+        key="pace_stores_multiselect",
+    )
+
+    if st.button("Save Pace Calculator Stores list", type="primary", key="save_pace_stores"):
+        set_store_list(PACE_CALCULATOR_STORES_LIST, set(selected_pace_keys))
+        st.success("Updated the Pace Calculator Stores list.")
         st.rerun()
 
 st.divider()

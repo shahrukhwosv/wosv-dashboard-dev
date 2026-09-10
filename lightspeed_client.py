@@ -273,6 +273,44 @@ def api_get(config, store_key, path, params=None):
     return resp.json()
 
 
+def fetch_all(config, store_key, endpoint, params=None, record_key=None):
+    """
+    Fetch every page of any Lightspeed collection endpoint (Item.json,
+    Category.json, Order.json, etc.), following the same cursor-based
+    "next" pagination used throughout this file.
+
+    endpoint: e.g. "Item.json"
+    params: query params (filters, load_relations, etc.) - dict or list of
+        (key, value) tuples, same as requests accepts
+    record_key: the JSON key holding the list of records, e.g. "Item". If
+        omitted, it's guessed from the endpoint name (Item.json -> "Item").
+
+    Generic counterpart to the resource-specific fetch_* functions above -
+    use those where they already exist (fetch_sales, fetch_categories,
+    etc.), and this for anything new (e.g. the Monthly Reports page).
+    """
+    if record_key is None:
+        record_key = endpoint.replace(".json", "").split("/")[-1]
+
+    results = []
+    data = api_get(config, store_key, endpoint, params=params)
+    seen_urls = set()
+
+    while True:
+        raw = data.get(record_key, [])
+        if isinstance(raw, dict):
+            raw = [raw]
+        results.extend(raw)
+
+        next_url = (data.get("@attributes", {}) or {}).get("next")
+        if not next_url or next_url in seen_urls:
+            break
+        seen_urls.add(next_url)
+        data = api_get_full_url(config, store_key, next_url)
+
+    return results
+
+
 def fetch_employees(config, store_key):
     """Returns {employeeID: display_name}"""
     data = api_get(config, store_key, "Employee.json", params={"limit": 100})
