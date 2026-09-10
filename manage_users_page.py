@@ -25,6 +25,31 @@ if not st.session_state.get("is_admin"):
     st.error("This page is only available to admin accounts.")
     st.stop()
 
+with st.expander("🔧 Store key diagnostic"):
+    st.caption(
+        "Checks whether a specific store_key exists in this app's config, "
+        "has a working Lightspeed connection, and whether it's currently "
+        "included in the Standard Stores / Pace Calculator Stores lists. "
+        "Never shows the actual token value - just whether one is present."
+    )
+    diag_config = load_config()
+    diag_key = st.text_input("Store key to check", value="store_13")
+    if st.button("Check", key="diag_check_button"):
+        store_entry = diag_config["stores"].get(diag_key)
+        if store_entry is None:
+            st.error(f"'{diag_key}' does NOT exist in this app's config at all.")
+        else:
+            st.success(f"'{diag_key}' exists in config.")
+            st.write(f"- Name: **{store_entry.get('name', '(none set)')}**")
+            st.write(f"- Has a refresh_token (connected): **{bool(store_entry.get('refresh_token'))}**")
+            st.write(f"- Has an account_id: **{bool(store_entry.get('account_id'))}**")
+            st.write(f"- pace_only flag: **{bool(store_entry.get('pace_only'))}**")
+
+            diag_standard = get_store_list(STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS)
+            diag_pace = get_store_list(PACE_CALCULATOR_STORES_LIST, default_keys=list(diag_config["stores"].keys()))
+            st.write(f"- Currently in the saved Standard Stores list: **{diag_key in diag_standard}**")
+            st.write(f"- Currently in the saved Pace Calculator Stores list: **{diag_key in diag_pace}**")
+
 st.subheader("Create a new user")
 with st.form("create_user_form", clear_on_submit=True):
     new_username = st.text_input("Username")
