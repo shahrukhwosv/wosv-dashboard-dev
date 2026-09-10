@@ -19,7 +19,7 @@ import streamlit as st
 import requests
 
 from lightspeed_client import load_config, save_config, TOKEN_URL_TEMPLATE
-from store_access import grant_access
+from store_access import grant_access, rename_store_key_everywhere
 
 AUTHORIZE_URL = "https://cloud.lightspeedapp.com/oauth/authorize.php"
 
@@ -219,3 +219,51 @@ if connected:
                     st.rerun()
 else:
     st.write("No stores connected yet.")
+
+st.divider()
+with st.expander("🔧 Rename a store key"):
+    st.caption(
+        "Renames a store's key everywhere in this app (its config entry, "
+        "any per-user access grants, and the Standard Stores / Pace "
+        "Calculator Stores lists) - the store's actual Lightspeed "
+        "connection and token are untouched, only the key it's filed "
+        "under changes."
+    )
+    st.warning(
+        "Only use this to merge a duplicate connection into the key that "
+        "historical data (e.g. in the pace log sheet) already uses - and "
+        "only after confirming both keys point at the SAME Lightspeed "
+        "account. Renaming to a key that's actually a different store "
+        "will make future data get logged under the wrong store's label."
+    )
+
+    rename_config = load_config()
+    rename_options = sorted(rename_config["stores"].keys())
+    if not rename_options:
+        st.write("No stores in config yet.")
+    else:
+        old_key = st.selectbox("Current store key", rename_options, key="rename_old_key")
+        old_entry = rename_config["stores"].get(old_key, {})
+        st.write(f"Currently: **{old_entry.get('name', old_key)}** (`{old_key}`)")
+
+        new_key = st.text_input("New store key", value="", key="rename_new_key").strip()
+        confirmed = st.checkbox(
+            "I've confirmed this is the same Lightspeed account as the target key",
+            key="rename_confirm",
+        )
+        do_rename = st.button("Rename", type="primary", disabled=not (new_key and confirmed))
+
+        if do_rename:
+            if new_key == old_key:
+                st.error("New key is the same as the current key - nothing to do.")
+            elif new_key in rename_config["stores"]:
+                st.error(
+                    f"'{new_key}' already exists in config - pick a key that isn't "
+                    f"already in use, or delete/rename that one first."
+                )
+            else:
+                rename_config["stores"][new_key] = rename_config["stores"].pop(old_key)
+                save_config(rename_config)
+                rename_store_key_everywhere(old_key, new_key)
+                st.success(f"Renamed '{old_key}' to '{new_key}' everywhere.")
+                st.rerun()

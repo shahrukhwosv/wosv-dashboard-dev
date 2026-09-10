@@ -124,6 +124,59 @@ def get_accessible_store_keys(user_id):
         conn.close()
 
 
+def rename_store_key_everywhere(old_key, new_key):
+    """
+    Renames a store_key across every table store_access.py owns: per-user
+    grants (user_store_access) and the named store lists
+    (store_list_config). Does NOT touch config["stores"] itself - the
+    caller is responsible for that (see add_store_page.py's "Rename a
+    store key" tool), since config lives in lightspeed_client.py's
+    load_config/save_config, not here.
+
+    Used when a store's data was accumulating under one key (e.g. an
+    original numbered store_key like "store_13") but got reconnected
+    under a different key later (e.g. a newer slug-based key like
+    "norman") - rather than starting a second, disconnected history,
+    this folds the newer connection's key into the one the historical
+    data already uses.
+    """
+    conn = _require_db()
+    try:
+        _ensure_access_table(conn)
+        _ensure_store_list_table(conn)
+        with conn.cursor() as cur:
+            # Drop any old_key grant that would collide with a user who
+            # already separately has new_key granted, then rename the rest.
+            cur.execute(
+                """
+                DELETE FROM user_store_access a
+                USING user_store_access b
+                WHERE a.store_key = %s AND b.store_key = %s AND a.user_id = b.user_id
+                """,
+                (old_key, new_key),
+            )
+            cur.execute(
+                "UPDATE user_store_access SET store_key = %s WHERE store_key = %s",
+                (new_key, old_key),
+            )
+
+            cur.execute("SELECT list_name, store_keys FROM store_list_config")
+            list_rows = cur.fetchall()
+            for list_name, keys in list_rows:
+                keys_set = set(keys)
+                if old_key in keys_set:
+                    keys_set.discard(old_key)
+                    keys_set.add(new_key)
+                    cur.execute(
+                        "UPDATE store_list_config SET store_keys = %s, updated_at = now() "
+                        "WHERE list_name = %s",
+                        (json.dumps(sorted(keys_set)), list_name),
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ----------------------------------------------------------------------
 # Named, admin-editable store lists
 #
