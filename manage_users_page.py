@@ -17,6 +17,7 @@ from store_access import (
     PACE_CALCULATOR_STORES_LIST,
     DEFAULT_STANDARD_STORE_KEYS,
 )
+from page_access import get_accessible_pages, set_user_page_access, PAGE_REGISTRY, ALL_PAGE_KEYS
 
 st.title("Manage Users")
 
@@ -38,8 +39,9 @@ if submitted:
         try:
             create_user(new_username, new_password, is_admin=make_admin)
             st.success(
-                f"✅ Created '{new_username}'. They start with a blank slate — "
-                f"grant them store access below."
+                f"✅ Created '{new_username}'. They start with no store "
+                f"access (blank slate - grant it below), but can see every "
+                f"page by default until you restrict that separately below too."
             )
         except ValueError as e:
             st.error(str(e))
@@ -78,6 +80,34 @@ else:
     if st.button("Save access", type="primary"):
         set_user_access(selected_user_id, set(selected_keys))
         st.success(f"Updated access for {selected_username}.")
+        st.rerun()
+
+    st.markdown("**Page access**")
+    st.caption(
+        "Which pages appear in the sidebar for this user. Until saved here "
+        "for the first time, a user sees every page (today's behavior) - "
+        "check only the ones they should have, then Save. Note: there's "
+        "currently no way to restrict a user to literally zero pages "
+        "through this control (an empty save is treated the same as "
+        "'not yet configured' and falls back to everything); ask if you "
+        "need that and it can be added."
+    )
+    current_pages = get_accessible_pages(selected_user_id)
+    default_pages = ALL_PAGE_KEYS if not current_pages else [
+        key for key in ALL_PAGE_KEYS if key in current_pages
+    ]
+
+    selected_page_keys = st.multiselect(
+        f"Pages {selected_username} can see",
+        options=ALL_PAGE_KEYS,
+        default=default_pages,
+        format_func=lambda key: dict(PAGE_REGISTRY).get(key, key),
+        key="page_access_multiselect",
+    )
+
+    if st.button("Save page access", type="primary", key="save_page_access"):
+        set_user_page_access(selected_user_id, set(selected_page_keys))
+        st.success(f"Updated page access for {selected_username}.")
         st.rerun()
 
 st.divider()
