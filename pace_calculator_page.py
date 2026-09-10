@@ -72,8 +72,15 @@ if df.empty:
         "terminal, then click 'Reload from sheet' above."
     )
 else:
+    # Only show stores that actually have at least one row logged in the
+    # sheet - store_keys (from the Pace Calculator Stores list) can include
+    # stores that have never been fetched yet, which would otherwise show
+    # up as an all-zero row instead of just not appearing.
+    logged_store_keys = set(df["store"].unique())
+    display_store_keys = [k for k in store_keys if k in logged_store_keys]
+
     rows = []
-    for store_key in store_keys:
+    for store_key in display_store_keys:
         pace = compute_pace(df, store_key)
         as_of = pace["as_of"]
         rows.append({
@@ -377,7 +384,7 @@ else:
 
     if get_pdf_clicked:
         store_rows = []
-        for store_key in store_keys:
+        for store_key in display_store_keys:
             total = month_actual_total(df, store_key, selected_year, selected_month)
             store_rows.append((store_names[store_key], total))
         store_rows.sort(key=lambda r: r[0])
