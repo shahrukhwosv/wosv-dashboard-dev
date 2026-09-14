@@ -50,6 +50,19 @@ with st.expander("🔧 Store key diagnostic"):
             st.write(f"- Currently in the saved Standard Stores list: **{diag_key in diag_standard}**")
             st.write(f"- Currently in the saved Pace Calculator Stores list: **{diag_key in diag_pace}**")
 
+with st.expander("🔄 Run nightly refresh now"):
+    st.caption(
+        "Manually runs the same refresh nightly_refresh.py does automatically "
+        "once a night (see that file for the Railway Cron Job setup) - useful "
+        "for getting Dashboard data populated right away instead of waiting "
+        "for the scheduled run, or for re-running after fixing a config issue."
+    )
+    if st.button("Run Mama's Sold refresh now", key="run_mama_refresh_button"):
+        from nightly_refresh import refresh_mama_sold
+        with st.spinner("Fetching Mama's sales across all connected stores - this can take a minute..."):
+            refresh_mama_sold(load_config())
+        st.success("Done. Reload the Dashboard page to see the updated numbers.")
+
 st.subheader("Create a new user")
 with st.form("create_user_form", clear_on_submit=True):
     new_username = st.text_input("Username")
