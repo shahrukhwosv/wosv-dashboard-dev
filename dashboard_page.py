@@ -4,26 +4,28 @@ Main Dashboard page - company-wide sales snapshot for yesterday, plus a
 
 Total Sales, Highest/Lowest Store, and the Monthly Trend chart all read
 directly from the pace log Google Sheet (via sales_pace.read_daily_log()) -
-the SAME sheet the Pace Calculator page uses, so most of this page never
-makes a Lightspeed API call.
+the SAME sheet the Pace Calculator page uses, so this page never makes a
+live Lightspeed API call itself.
 
-IMPORTANT: that sheet only updates when someone clicks "Fetch missing days
-from Lightspeed" on the Pace Calculator page (a manual button, not
-automatic/scheduled). If nobody's clicked it in a while, these numbers can
-be stale or missing recent days - there's a caption below showing the most
-recent date actually found in the sheet so that's visible at a glance.
+Both that sheet and Mama's Sold (see below) are kept current by
+nightly_refresh.py, meant to run once a night via a Railway Cron Job -
+see that file for what it does and how to set it up. This page just
+reads whatever nightly_refresh.py last saved; it does NOT fetch anything
+live on page load, which is deliberate (nobody should have to wait on a
+Lightspeed fetch just to open the homepage). If nobody's run that job
+recently, numbers here can be stale - there's a caption below showing the
+most recent date actually found in the sheet so that's visible at a
+glance.
 
-Mama's Sold is the one metric that's NOT cached - the pace log sheet only
+Mama's Sold specifically comes from dashboard_data.load_mama_snapshot() -
+nightly_refresh.py computes it once a night (the pace log sheet only
 tracks each store's total dollars per day, not a category/keyword
-breakdown, so this uses the same live keyword search Category Sales
-already does (keyword "mama", excluding "pacha"), scoped to just
-yesterday. This is a real Lightspeed fetch on every page load (parallel
-across stores), unlike everything else on this page. It's ALSO the one
-metric on this page that intentionally covers all connected stores
-(unrestricted - the exact same scope Category Sales uses), not just the
-Standard Stores list the rest of the page uses. If a particular store's
-fetch fails (e.g. limited API access), it's logged and excluded from the
-total with a note, rather than crashing the whole page.
+breakdown, so it can't be read from there like the other metrics; and a
+live per-page-load fetch, which is what this page used to do, meant
+every visit paid for a real Lightspeed round-trip across every store).
+It's also the one metric that intentionally covers all connected stores
+(unrestricted - the same scope Category Sales uses), not just the
+Standard Stores list the rest of the page uses.
 
 MTD Pace reuses sales_pace.compute_pace() (same projection math as the
 Pace Calculator page) per store, summed into one company-wide projected
@@ -34,7 +36,6 @@ same as Commissions/Transactions/Touch Tell/Monthly Reports/Purchase
 Order Status.
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 import streamlit as st
@@ -43,6 +44,7 @@ import pandas as pd
 import lightspeed_client as ls
 from store_access import get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
 from sales_pace import read_daily_log, compute_pace, store_local_today
+from dashboard_data import load_mama_snapshot
 
 st.title("Dashboard")
 
@@ -89,38 +91,18 @@ lowest_row = day_df.loc[day_df["total"].idxmin()] if not day_df.empty else None
 
 st.caption(f"Showing {snapshot_date.strftime('%A, %B %d')} across {len(store_keys)} store(s)")
 
+# Mama's Sold no longer fetches live - see nightly_refresh.py, which
+# computes this once a night and saves it here via dashboard_data.py.
+mama_date, mama_total, mama_quantity, mama_failed_stores, mama_updated_at = load_mama_snapshot()
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def _fetch_mama_sold(store_keys_tuple, snapshot_date):
-    total = 0.0
-    quantity = 0.0
-    failed_stores = []
-
-    def _fetch_one(store_key):
-        return ls.fetch_keyword_sales(config, store_key, "mama", snapshot_date, snapshot_date, "pacha")
-
-    with ThreadPoolExecutor(max_workers=max(len(store_keys_tuple), 1)) as pool:
-        futures = {pool.submit(_fetch_one, store_key): store_key for store_key in store_keys_tuple}
-        for future in as_completed(futures):
-            store_key = futures[future]
-            try:
-                result = future.result()
-            except Exception as e:
-                print(f"[{store_key}] Mama's sold fetch failed: {e}")
-                failed_stores.append(store_key)
-                continue
-            total += result["total"]
-            quantity += result["quantity"]
-    return total, quantity, failed_stores
-
-
-mama_store_keys = sorted(get_page_store_keys(config))  # unrestricted - every connected store, unlike the rest of this page
-
-with st.spinner(f"Fetching Mama's sales for yesterday across {len(mama_store_keys)} store(s)..."):
-    mama_total, mama_quantity, mama_failed_stores = _fetch_mama_sold(tuple(mama_store_keys), snapshot_date)
-
-if mama_failed_stores:
-    failed_names = ", ".join(stores[k].get("name", k) for k in mama_failed_stores)
+if mama_total is None:
+    st.caption(
+        "⚠️ Mama's Sold hasn't been computed yet - the nightly refresh job "
+        "hasn't run for the first time. See nightly_refresh.py for setup."
+    )
+    mama_total, mama_quantity = 0.0, 0.0
+elif mama_failed_stores:
+    failed_names = ", ".join(stores[k].get("name", k) for k in mama_failed_stores if k in stores)
     st.caption(f"⚠️ Mama's Sold couldn't be fetched for: {failed_names} - excluded from the total below.")
 
 # --- Month-to-date pace, company-wide ---
@@ -142,7 +124,10 @@ col3.metric(
     store_names.get(lowest_row["store"], lowest_row["store"]) if lowest_row is not None else "—",
     f"${lowest_row['total']:,.2f}" if lowest_row is not None else None,
 )
-col4.metric("Mama's Sold", f"{mama_quantity:,.0f} units", f"${mama_total:,.2f}")
+mama_delta = f"${mama_total:,.2f}"
+if mama_date:
+    mama_delta += f" ({mama_date.strftime('%b %d')})"
+col4.metric("Mama's Sold", f"{mama_quantity:,.0f} units", mama_delta)
 col5.metric("MTD Pace", f"${mtd_projected_total:,.0f}", "Projected this month")
 
 
