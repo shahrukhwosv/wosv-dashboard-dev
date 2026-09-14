@@ -8,9 +8,11 @@ every store's PO list one at a time:
   - a PO sitting in "Check In" a long time (received, but the district
     manager's final review/count to mark it Finished hasn't happened)
 
-No automatic flagging or thresholds - just sortable "Days Since Ordered"
-/ "Days Since Received" columns, so the oldest ones surface by sorting
-the table rather than a fixed cutoff. Click a column header to sort.
+No automatic flagging or thresholds - just a sortable "Days Since
+Created" / "Days Since Ordered" column (click a header to sort), plus
+Store/Vendor/minimum-age filters below to narrow the table down. All
+filters operate on data already fetched with "Load purchase orders" -
+changing a filter doesn't re-hit Lightspeed.
 
 Context: district managers now create the PO in Lightspeed themselves,
 at the moment they place an order with a vendor (not after it arrives) -
@@ -19,6 +21,13 @@ which fields mean what. Vendors' own order/invoice numbers don't always
 match Lightspeed's own PO reference number, so DMs record the vendor's
 number in the PO's notes field - that's included here as its own column
 so it's searchable without opening Lightspeed.
+
+EXCLUDED_KEYWORDS below filters out the recurring "Broken Items" and
+"Tags" administrative POs that most stores always have open, which
+aren't real vendor orders and would otherwise clutter every store's row
+count. Matched case-insensitively against the PO # and Vendor Order #
+(notes) fields - toggle "Also show Broken Items / Tags POs" to see them
+anyway.
 
 Restricted to the Standard Stores list, same as Commissions/Transactions/
 Touch Tell/Monthly Reports.
@@ -41,11 +50,18 @@ STAGE_LABELS = {
     "finished": "Finished",
 }
 
+# Recurring administrative POs (not real vendor orders) that most stores
+# always have sitting open - matched case-insensitively against PO # and
+# Vendor Order # (notes). Add more here if other recurring non-order POs
+# show up the same way.
+EXCLUDED_KEYWORDS = ["broken item", "tags"]
+
 st.title("Purchase Order Status")
 st.caption(
     "Every purchase order across your stores, so a delayed entry or a "
-    "stalled review is visible at a glance. Sort by the Days Since "
-    "columns (click a column header) to see what's oldest."
+    "stalled review is visible at a glance. Sort by a Days Since column "
+    "(click its header) to see what's oldest, or use the filters below "
+    "to narrow the table."
 )
 
 
@@ -60,6 +76,11 @@ def _parse_date(value):
         return None
 
 
+def _is_excluded(po_number, vendor_order_number):
+    haystack = f"{po_number} {vendor_order_number}".lower()
+    return any(keyword in haystack for keyword in EXCLUDED_KEYWORDS)
+
+
 config = ls.load_config()
 store_keys = sorted(
     get_page_store_keys(config, list_name=STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS),
@@ -70,8 +91,6 @@ store_names = {key: config["stores"][key].get("name", key) for key in store_keys
 if not store_keys:
     st.info("No stores available. Check the Standard Stores list on the Manage Users page.")
     st.stop()
-
-show_finished = st.checkbox("Also show Finished POs", value=False)
 
 if st.button("Load purchase orders", type="primary"):
     with st.spinner(f"Fetching purchase orders for {len(store_keys)} store(s)..."):
@@ -88,7 +107,6 @@ if st.button("Load purchase orders", type="primary"):
                 today = store_local_today()
                 for po in pos:
                     ordered_date = _parse_date(po["ordered_date"])
-                    received_date = _parse_date(po["received_date"])
                     created_date = _parse_date(po["create_time"])
 
                     all_rows.append({
@@ -101,9 +119,8 @@ if st.button("Load purchase orders", type="primary"):
                         "Days Since Created": (today - created_date).days if created_date else None,
                         "Ordered": ordered_date,
                         "Days Since Ordered": (today - ordered_date).days if ordered_date else None,
-                        "Received": received_date,
-                        "Days Since Received": (today - received_date).days if received_date else None,
                         "Total": po["total"],
+                        "_excluded": _is_excluded(po["reference_number"], po["notes"]),
                     })
 
         st.session_state["po_status_rows"] = all_rows
@@ -113,12 +130,45 @@ if rows is None:
     st.info("Click \"Load purchase orders\" to fetch current data.")
     st.stop()
 
-df = pd.DataFrame(rows)
+full_df = pd.DataFrame(rows)
+
+st.divider()
+st.subheader("Filters")
+
+filter_cols = st.columns(4)
+with filter_cols[0]:
+    selected_stores = st.multiselect(
+        "Store", options=sorted(full_df["Store"].unique()), default=[]
+    )
+with filter_cols[1]:
+    selected_vendors = st.multiselect(
+        "Vendor", options=sorted(full_df["Vendor"].unique()), default=[]
+    )
+with filter_cols[2]:
+    min_days_old = st.number_input(
+        "Only show POs at least this many days old (by Created date)",
+        min_value=0, value=0, step=1,
+    )
+with filter_cols[3]:
+    show_finished = st.checkbox("Also show Finished POs", value=False)
+    show_excluded = st.checkbox("Also show Broken Items / Tags POs", value=False)
+
+df = full_df
+if selected_stores:
+    df = df[df["Store"].isin(selected_stores)]
+if selected_vendors:
+    df = df[df["Vendor"].isin(selected_vendors)]
+if min_days_old > 0:
+    df = df[df["Days Since Created"].fillna(0) >= min_days_old]
 if not show_finished:
     df = df[df["Stage"] != "Finished"]
+if not show_excluded:
+    df = df[~df["_excluded"]]
+
+df = df.drop(columns=["_excluded"])
 
 if df.empty:
-    st.write("No purchase orders match the current filter.")
+    st.write("No purchase orders match the current filters.")
 else:
     st.dataframe(
         df,
@@ -126,7 +176,6 @@ else:
             "Total": st.column_config.NumberColumn(format="$%.2f"),
             "Days Since Created": st.column_config.NumberColumn(format="%d"),
             "Days Since Ordered": st.column_config.NumberColumn(format="%d"),
-            "Days Since Received": st.column_config.NumberColumn(format="%d"),
         },
         hide_index=True,
         use_container_width=True,
