@@ -41,9 +41,11 @@ Pace Calculator page) per store, summed into one company-wide projected
 total for the current month, compared against last month's actual total
 (sales_pace.month_actual_total(), also already existing).
 
-Total Sales, Highest Store, and Lowest Store all show a real day-over-day
-% change, computed from the same log data already being read for the
-rest of the page.
+Total Sales, Highest Store, and Lowest Store show the actual dollar
+figure rather than a day-over-day comparison. Top Performing Stores
+still shows a real day-over-day % change per store (same underlying
+day_before_by_store data), since that panel is specifically about
+ranking/movement, not a single headline number.
 
 Everything except Mama's Sold uses the Pace Calculator Stores list
 (same scope, and same require_connected=False behavior, as the Pace
@@ -215,10 +217,7 @@ total_sales = float(day_df["total"].sum())
 
 day_before = snapshot_date - timedelta(days=1)
 day_before_df = accessible_log_df[accessible_log_df["date"] == day_before]
-day_before_total = float(day_before_df["total"].sum())
 day_before_by_store = day_before_df.set_index("store")["total"].to_dict()
-
-total_sales_change = pct_change(total_sales, day_before_total)
 
 highest_row = day_df.loc[day_df["total"].idxmax()] if not day_df.empty else None
 lowest_row = day_df.loc[day_df["total"].idxmin()] if not day_df.empty else None
@@ -263,8 +262,6 @@ with cols[0]:
     st.markdown(
         render_metric_card(
             "TOTAL SALES", f"${total_sales:,.2f}",
-            pct_delta_text(total_sales_change), "vs prior day",
-            delta_positive=(total_sales_change >= 0) if total_sales_change is not None else None,
             icon="$", icon_color="#22C55E", sparkline_html=spark,
         ),
         unsafe_allow_html=True,
@@ -272,18 +269,14 @@ with cols[0]:
 
 with cols[1]:
     if highest_row is not None:
-        change = pct_change(highest_row["total"], day_before_by_store.get(highest_row["store"]))
-        delta_val = pct_delta_text(change)
-        delta_period = "vs prior day" if delta_val else None
         spark = sparkline_svg(
             daily_series(accessible_log_df, snapshot_date, SPARK_DAYS, store_key=highest_row["store"]), "#3B82F6"
         )
         st.markdown(
             render_metric_card(
                 "HIGHEST STORE", store_names.get(highest_row["store"], highest_row["store"]),
-                delta_val, delta_period,
-                delta_positive=(change >= 0) if change is not None else None,
-                icon="\u25b2", icon_color="#3B82F6", sparkline_html=spark,
+                f"${highest_row['total']:,.2f}",
+                delta_positive=None, icon="\u25b2", icon_color="#3B82F6", sparkline_html=spark,
             ),
             unsafe_allow_html=True,
         )
@@ -292,18 +285,14 @@ with cols[1]:
 
 with cols[2]:
     if lowest_row is not None:
-        change = pct_change(lowest_row["total"], day_before_by_store.get(lowest_row["store"]))
-        delta_val = pct_delta_text(change)
-        delta_period = "vs prior day" if delta_val else None
         spark = sparkline_svg(
             daily_series(accessible_log_df, snapshot_date, SPARK_DAYS, store_key=lowest_row["store"]), "#EF4444"
         )
         st.markdown(
             render_metric_card(
                 "LOWEST STORE", store_names.get(lowest_row["store"], lowest_row["store"]),
-                delta_val, delta_period,
-                delta_positive=(change >= 0) if change is not None else None,
-                icon="\u25bc", icon_color="#EF4444", sparkline_html=spark,
+                f"${lowest_row['total']:,.2f}",
+                delta_positive=None, icon="\u25bc", icon_color="#EF4444", sparkline_html=spark,
             ),
             unsafe_allow_html=True,
         )
