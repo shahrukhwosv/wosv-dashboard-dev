@@ -118,32 +118,39 @@ def daily_series(df, end_date, days, store_key=None):
 def render_metric_card(label, value, delta_value=None, delta_period=None, delta_positive=None,
                         icon="•", icon_color="#6366F1", sparkline_html=""):
     """delta_positive: True (green), False (red), or None (neutral gray) -
-    pass None when there's no real comparison to show."""
+    pass None when there's no real comparison to show.
+
+    Built as ONE continuous string (no embedded newlines/indentation) on
+    purpose - Streamlit's Markdown renderer treats a blank line followed
+    by indented text as a code block, which is exactly what a
+    pretty-printed multi-line f-string here triggered whenever a section
+    (e.g. delta_html) came back empty. A single-line string can't
+    produce that blank-line pattern no matter which parts are empty."""
     delta_html = ""
     if delta_value:
         color = "#22C55E" if delta_positive is True else "#EF4444" if delta_positive is False else "#9CA3AF"
         delta_html = f'<div style="font-size:0.82rem; color:{color}; font-weight:500;">{delta_value}</div>'
         if delta_period:
             delta_html += f'<div style="font-size:0.72rem; color:#6B7280; margin-top:1px;">{delta_period}</div>'
-    return f"""
-    <div style="{CARD_STYLE} padding: 1.1rem 1.2rem; height: 150px; display:flex;
-                flex-direction:column; justify-content:space-between;">
-        <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:40px; height:40px; border-radius:10px; background:{icon_color}26;
-                        color:{icon_color}; display:flex; align-items:center; justify-content:center;
-                        font-size:1.05rem; font-weight:700; flex-shrink:0;">{icon}</div>
-            <div style="font-size:0.8rem; color:#9CA3AF;">{label}</div>
-        </div>
-        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:8px;">
-            <div style="min-width:0;">
-                <div style="font-size:1.4rem; font-weight:700; line-height:1.25; overflow:hidden;
-                            text-overflow:ellipsis; white-space:nowrap;">{value}</div>
-                {delta_html}
-            </div>
-            <div style="flex-shrink:0;">{sparkline_html}</div>
-        </div>
-    </div>
-    """
+    return (
+        f'<div style="{CARD_STYLE} padding: 1.1rem 1.2rem; height: 150px; display:flex; '
+        f'flex-direction:column; justify-content:space-between;">'
+        f'<div style="display:flex; align-items:center; gap:10px;">'
+        f'<div style="width:40px; height:40px; border-radius:10px; background:{icon_color}26; '
+        f'color:{icon_color}; display:flex; align-items:center; justify-content:center; '
+        f'font-size:1.05rem; font-weight:700; flex-shrink:0;">{icon}</div>'
+        f'<div style="font-size:0.8rem; color:#9CA3AF;">{label}</div>'
+        f'</div>'
+        f'<div style="display:flex; align-items:flex-end; justify-content:space-between; gap:8px;">'
+        f'<div style="min-width:0;">'
+        f'<div style="font-size:1.4rem; font-weight:700; line-height:1.25; overflow:hidden; '
+        f'text-overflow:ellipsis; white-space:nowrap;">{value}</div>'
+        f'{delta_html}'
+        f'</div>'
+        f'<div style="flex-shrink:0;">{sparkline_html}</div>'
+        f'</div>'
+        f'</div>'
+    )
 
 
 def pct_change(current, previous):
