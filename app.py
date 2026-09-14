@@ -10,14 +10,10 @@ for admin accounts, unaffected by page_access.py grants.
 
 Run with:  streamlit run app.py
 
-The actual page content lives in commission_page.py, reconciliation_page.py,
-touch_tell_page.py, pace_calculator_page.py, category_sales_page.py,
-monthly_reports_page.py, purchase_order_status_page.py, add_store_page.py,
-and manage_users_page.py.
-dashboard_page.py still exists in the repo but is TEMPORARILY not linked
-in the sidebar - re-add it to the `page_objects` dict below when ready
-(and to page_access.PAGE_REGISTRY, if regular users should be able to be
-granted access to it).
+The actual page content lives in dashboard_page.py, commission_page.py,
+reconciliation_page.py, touch_tell_page.py, pace_calculator_page.py,
+category_sales_page.py, monthly_reports_page.py,
+purchase_order_status_page.py, add_store_page.py, and manage_users_page.py.
 
 NOTE: pace_calculator_page.py has its own separate simple password gate
 built in (see PACE_CALCULATOR_PASSWORD) - unrelated to the login system
@@ -42,6 +38,7 @@ with st.sidebar:
 # Keys here must match page_access.PAGE_REGISTRY - that's what the Manage
 # Users page's "Page access" editor grants/revokes per user.
 page_objects = {
+    "dashboard": st.Page("dashboard_page.py", title="Dashboard", icon="🏠"),
     "commissions": st.Page("commission_page.py", title="Commissions", icon="💰"),
     "transactions": st.Page("reconciliation_page.py", title="Transactions", icon="💳"),
     "touch_tell": st.Page("touch_tell_page.py", title="Touch Tell", icon="📦"),

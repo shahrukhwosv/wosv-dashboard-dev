@@ -17,6 +17,7 @@ from lightspeed_client import _get_db_connection
 # app.py - add a new page here (and give it a page_key) when a new page
 # is added to app.py's `page_objects` dict.
 PAGE_REGISTRY = [
+    ("dashboard", "Dashboard"),
     ("commissions", "Commissions"),
     ("transactions", "Transactions"),
     ("touch_tell", "Touch Tell"),

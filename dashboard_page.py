@@ -1,11 +1,11 @@
 """
-Main Dashboard page - company-wide sales snapshot.
+Main Dashboard page - company-wide sales snapshot for yesterday, plus a
+6-month trend.
 
-Total Sales, Average Sales per Store, and the Monthly Trend chart all read
+Total Sales, Highest/Lowest Store, and the Monthly Trend chart all read
 directly from the pace log Google Sheet (via sales_pace.read_daily_log()) -
-the SAME sheet the Pace Calculator page uses. This means the Dashboard
-itself never makes a Lightspeed API call - it's purely reading whatever's
-already in the sheet.
+the SAME sheet the Pace Calculator page uses, so most of this page never
+makes a Lightspeed API call.
 
 IMPORTANT: that sheet only updates when someone clicks "Fetch missing days
 from Lightspeed" on the Pace Calculator page (a manual button, not
@@ -13,44 +13,47 @@ automatic/scheduled). If nobody's clicked it in a while, these numbers can
 be stale or missing recent days - there's a caption below showing the most
 recent date actually found in the sheet so that's visible at a glance.
 
-Average Units per Sale is the one exception - the sheet only tracks dollar
-totals, not units, so that metric still reads from the daily_store_sales
-database table (see sales_summary.py / sync_daily_sales.py), which DOES
-require a real Lightspeed sync to populate.
+Mama's Sold is the one metric that's NOT cached - the pace log sheet only
+tracks each store's total dollars per day, not a category/keyword
+breakdown, so this uses the same live keyword search Category Sales
+already does (keyword "mama", excluding "pacha"), scoped to just
+yesterday. This is a real Lightspeed fetch on every page load (parallel
+across stores), unlike everything else on this page.
+
+MTD Pace reuses sales_pace.compute_pace() (same projection math as the
+Pace Calculator page) per store, summed into one company-wide projected
+total for the current month.
+
+Restricted to the Standard Stores list, same as Commissions/Transactions/
+Touch Tell/Monthly Reports/Purchase Order Status.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 import streamlit as st
 import pandas as pd
 
-from lightspeed_client import load_config
-from store_access import get_accessible_store_keys
-from sales_summary import get_daily_metrics
-from sales_pace import read_daily_log
+import lightspeed_client as ls
+from store_access import get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
+from sales_pace import read_daily_log, compute_pace, store_local_today
 
 st.title("Dashboard")
 
-config = load_config()
+config = ls.load_config()
 stores = config["stores"]
 
-if st.session_state.get("is_admin"):
-    accessible_store_keys = [
-        key for key, val in stores.items() if val.get("refresh_token")
-    ]
-else:
-    granted = get_accessible_store_keys(st.session_state.user_id)
-    accessible_store_keys = [
-        key for key, val in stores.items()
-        if val.get("refresh_token") and key in granted
-    ]
+store_keys = list(get_page_store_keys(
+    config, list_name=STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS
+))
+store_names = {key: stores[key].get("name", key) for key in store_keys}
 
-if not accessible_store_keys:
-    st.info('No stores added. Click "Add a Store" in the menu to connect new stores.')
+if not store_keys:
+    st.info("No stores available. Check the Standard Stores list on the Manage Users page.")
     st.stop()
 
 log_df = read_daily_log()
-accessible_log_df = log_df[log_df["store"].isin(accessible_store_keys)]
+accessible_log_df = log_df[log_df["store"].isin(store_keys)]
 
 if accessible_log_df.empty:
     st.warning(
@@ -61,7 +64,7 @@ if accessible_log_df.empty:
     st.stop()
 
 most_recent_date = accessible_log_df["date"].max()
-yesterday = date.today() - timedelta(days=1)
+yesterday = store_local_today() - timedelta(days=1)
 if most_recent_date < yesterday:
     st.warning(
         f"⚠️ The pace log sheet's most recent data is from "
@@ -74,24 +77,53 @@ if most_recent_date < yesterday:
 snapshot_date = min(yesterday, most_recent_date)
 day_df = accessible_log_df[accessible_log_df["date"] == snapshot_date]
 total_sales = float(day_df["total"].sum())
-store_count = len(accessible_store_keys)
-avg_sales_per_store = total_sales / store_count if store_count else 0
 
-# Units still requires a real Lightspeed sync - the sheet doesn't track it.
-_, total_units, total_sale_count = get_daily_metrics(accessible_store_keys, snapshot_date)
-avg_units_per_sale = total_units / total_sale_count if total_sale_count else 0
+highest_row = day_df.loc[day_df["total"].idxmax()] if not day_df.empty else None
+lowest_row = day_df.loc[day_df["total"].idxmin()] if not day_df.empty else None
 
-st.caption(f"Showing {snapshot_date.strftime('%A, %B %d')} across {store_count} store(s)")
+st.caption(f"Showing {snapshot_date.strftime('%A, %B %d')} across {len(store_keys)} store(s)")
 
-col1, col2, col3 = st.columns(3)
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_mama_sold(store_keys_tuple, snapshot_date):
+    total = 0.0
+    quantity = 0.0
+    with ThreadPoolExecutor(max_workers=max(len(store_keys_tuple), 1)) as pool:
+        futures = [
+            pool.submit(ls.fetch_keyword_sales, config, store_key, "mama", snapshot_date, snapshot_date, "pacha")
+            for store_key in store_keys_tuple
+        ]
+        for future in as_completed(futures):
+            result = future.result()
+            total += result["total"]
+            quantity += result["quantity"]
+    return total, quantity
+
+
+with st.spinner("Fetching Mama's sales for yesterday..."):
+    mama_total, mama_quantity = _fetch_mama_sold(tuple(store_keys), snapshot_date)
+
+# --- Month-to-date pace, company-wide ---
+today = store_local_today()
+mtd_projected_total = sum(
+    compute_pace(accessible_log_df, store_key, today)["projected_monthly"]
+    for store_key in store_keys
+)
+
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Total Sales", f"${total_sales:,.2f}")
-col2.metric("Average Sales per Store", f"${avg_sales_per_store:,.2f}")
-col3.metric("Average Units per Sale", f"{avg_units_per_sale:,.2f}")
-if total_sale_count == 0:
-    st.caption(
-        "Units per sale needs a real Lightspeed sync (sync_daily_sales.py) "
-        "for this date - the pace sheet only tracks dollar totals."
-    )
+col2.metric(
+    "Highest Store",
+    store_names.get(highest_row["store"], highest_row["store"]) if highest_row is not None else "—",
+    f"${highest_row['total']:,.2f}" if highest_row is not None else None,
+)
+col3.metric(
+    "Lowest Store",
+    store_names.get(lowest_row["store"], lowest_row["store"]) if lowest_row is not None else "—",
+    f"${lowest_row['total']:,.2f}" if lowest_row is not None else None,
+)
+col4.metric("Mama's Sold", f"{mama_quantity:,.0f} units", f"${mama_total:,.2f}")
+col5.metric("MTD Pace", f"${mtd_projected_total:,.0f}", "Projected this month")
 
 
 # --- Monthly trend chart ---
@@ -99,7 +131,6 @@ st.divider()
 st.subheader("Monthly Sales Trend")
 
 MONTHS_BACK = 6
-today = date.today()
 year, month = today.year, today.month
 for _ in range(MONTHS_BACK - 1):
     month -= 1
@@ -122,7 +153,7 @@ trend_df = accessible_log_df[accessible_log_df["date"] >= earliest_start].copy()
 if trend_df.empty:
     st.write("No historical data in the pace log sheet yet for this range.")
 else:
-    store_names = {k: stores[k].get("name", k) for k in accessible_store_keys}
+    store_names = {k: stores[k].get("name", k) for k in store_keys}
 
     selected_names = st.multiselect(
         "Stores to show on the chart",
