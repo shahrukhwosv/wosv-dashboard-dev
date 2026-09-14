@@ -357,7 +357,7 @@ trend_df = accessible_log_df[accessible_log_df["date"] >= earliest_start].copy()
 chart_col, ranking_col = st.columns([2, 1])
 
 with chart_col:
-    chart_container = st.container(border=True)
+    chart_container = st.container(border=True, height=620)
     with chart_container:
         title_col, metric_col, popover_col = st.columns([2.4, 1, 0.9])
         with title_col:
@@ -422,7 +422,7 @@ with chart_col:
                 st.altair_chart(chart, use_container_width=True)
 
 with ranking_col:
-    ranking_container = st.container(border=True)
+    ranking_container = st.container(border=True, height=620)
     with ranking_container:
         st.markdown(
             '<div style="font-size:1rem; font-weight:600;">Top Performing Stores</div>'
