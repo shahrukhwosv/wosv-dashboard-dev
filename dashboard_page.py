@@ -357,102 +357,101 @@ trend_df = accessible_log_df[accessible_log_df["date"] >= earliest_start].copy()
 chart_col, ranking_col = st.columns([2, 1])
 
 with chart_col:
-    st.markdown(f'<div style="{CARD_STYLE} padding: 1.25rem;">', unsafe_allow_html=True)
-    title_col, metric_col, popover_col = st.columns([2.4, 1, 0.9])
-    with title_col:
-        st.markdown(
-            '<div style="font-size:1rem; font-weight:600;">Monthly Sales Trend</div>'
-            '<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
-            'Compare sales across all stores</div>',
-            unsafe_allow_html=True,
-        )
-    with metric_col:
-        # Only Total Sales exists in the pace log (no unit/transaction
-        # counts tracked there) - shown as a static label rather than
-        # fake Units Sold/Transactions tabs that would do nothing.
-        st.markdown(
-            '<div style="text-align:right;"><span style="background:#6366F133; color:#A5B4FC; '
-            'font-size:0.78rem; padding:5px 12px; border-radius:8px;">Total Sales</span></div>',
-            unsafe_allow_html=True,
-        )
-    with popover_col:
-        st.markdown('<div style="height: 4px;"></div>', unsafe_allow_html=True)
-
-    if trend_df.empty:
-        st.write("No historical data in the pace log sheet yet for this range.")
-    else:
+    chart_container = st.container(border=True)
+    with chart_container:
+        title_col, metric_col, popover_col = st.columns([2.4, 1, 0.9])
+        with title_col:
+            st.markdown(
+                '<div style="font-size:1rem; font-weight:600;">Monthly Sales Trend</div>'
+                '<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
+                'Compare sales across all stores</div>',
+                unsafe_allow_html=True,
+            )
+        with metric_col:
+            # Only Total Sales exists in the pace log (no unit/transaction
+            # counts tracked there) - shown as a static label rather than
+            # fake Units Sold/Transactions tabs that would do nothing.
+            st.markdown(
+                '<div style="text-align:right;"><span style="background:#6366F133; color:#A5B4FC; '
+                'font-size:0.78rem; padding:5px 12px; border-radius:8px;">Total Sales</span></div>',
+                unsafe_allow_html=True,
+            )
         with popover_col:
-            with st.popover("Stores", use_container_width=True):
-                selected_names = st.multiselect(
-                    "Stores to show",
-                    options=sorted(store_names.values()),
-                    default=sorted(store_names.values()),
-                    label_visibility="collapsed",
-                )
-
-        trend_df["month"] = trend_df["date"].apply(lambda d: d.strftime("%b %Y"))
-        trend_df["store_name"] = trend_df["store"].map(store_names)
-        trend_df = trend_df[trend_df["store_name"].isin(selected_names)]
+            st.markdown('<div style="height: 4px;"></div>', unsafe_allow_html=True)
 
         if trend_df.empty:
-            st.write("No stores selected.")
+            st.write("No historical data in the pace log sheet yet for this range.")
         else:
-            monthly = trend_df.groupby(["month", "store_name"], as_index=False)["total"].sum()
-            monthly["month"] = pd.Categorical(monthly["month"], categories=month_order, ordered=True)
-            monthly = monthly.sort_values("month")
+            with popover_col:
+                with st.popover("Stores", use_container_width=True):
+                    selected_names = st.multiselect(
+                        "Stores to show",
+                        options=sorted(store_names.values()),
+                        default=sorted(store_names.values()),
+                        label_visibility="collapsed",
+                    )
 
-            chart = (
-                alt.Chart(monthly)
-                .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=40))
-                .encode(
-                    x=alt.X("month:N", sort=month_order, title=None,
-                            axis=alt.Axis(labelAngle=0, grid=False)),
-                    y=alt.Y("total:Q", title=None,
-                            axis=alt.Axis(gridColor="rgba(255,255,255,0.08)", format="$,.0f")),
-                    color=alt.Color("store_name:N", title=None,
-                                     scale=alt.Scale(scheme="tableau10"),
-                                     legend=alt.Legend(orient="bottom", columns=4, symbolType="stroke")),
-                    tooltip=["store_name", "month", alt.Tooltip("total:Q", format="$,.2f")],
+            trend_df["month"] = trend_df["date"].apply(lambda d: d.strftime("%b %Y"))
+            trend_df["store_name"] = trend_df["store"].map(store_names)
+            trend_df = trend_df[trend_df["store_name"].isin(selected_names)]
+
+            if trend_df.empty:
+                st.write("No stores selected.")
+            else:
+                monthly = trend_df.groupby(["month", "store_name"], as_index=False)["total"].sum()
+                monthly["month"] = pd.Categorical(monthly["month"], categories=month_order, ordered=True)
+                monthly = monthly.sort_values("month")
+
+                chart = (
+                    alt.Chart(monthly)
+                    .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=40))
+                    .encode(
+                        x=alt.X("month:N", sort=month_order, title=None,
+                                axis=alt.Axis(labelAngle=0, grid=False)),
+                        y=alt.Y("total:Q", title=None,
+                                axis=alt.Axis(gridColor="rgba(255,255,255,0.08)", format="$,.0f")),
+                        color=alt.Color("store_name:N", title=None,
+                                         scale=alt.Scale(scheme="tableau10"),
+                                         legend=alt.Legend(orient="bottom", columns=4, symbolType="stroke")),
+                        tooltip=["store_name", "month", alt.Tooltip("total:Q", format="$,.2f")],
+                    )
+                    .properties(height=320)
+                    .configure_view(strokeWidth=0)
+                    .configure_axis(labelColor="#9CA3AF", titleColor="#9CA3AF")
                 )
-                .properties(height=320)
-                .configure_view(strokeWidth=0)
-                .configure_axis(labelColor="#9CA3AF", titleColor="#9CA3AF")
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
+                st.altair_chart(chart, use_container_width=True)
 
 with ranking_col:
-    st.markdown(f'<div style="{CARD_STYLE} padding: 1.25rem; height: 100%;">', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="font-size:1rem; font-weight:600;">Top Performing Stores</div>'
-        f'<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.9rem;">'
-        f'By total sales ({snapshot_date.strftime("%b %d")})</div>',
-        unsafe_allow_html=True,
-    )
-
-    ranked = day_df.sort_values("total", ascending=False).reset_index(drop=True)
-    rows_html = []
-    for i, row in ranked.iterrows():
-        store_key = row["store"]
-        name = store_names.get(store_key, store_key)
-        change = pct_change(row["total"], day_before_by_store.get(store_key))
-        if change is None:
-            change_html = ""
-        else:
-            arrow = "\u25b2" if change >= 0 else "\u25bc"
-            color = "#22C55E" if change >= 0 else "#EF4444"
-            change_html = f'<span style="color:{color}; font-size:0.78rem;">{arrow} {abs(change):.1f}%</span>'
-        rows_html.append(
-            f'<div style="display:flex; justify-content:space-between; align-items:center; '
-            f'padding:7px 0; border-top:1px solid rgba(255,255,255,0.06);">'
-            f'<div style="display:flex; align-items:center; gap:8px; min-width:0;">'
-            f'<span style="color:#6B7280; font-size:0.78rem; width:16px;">{i + 1}</span>'
-            f'<span style="font-size:0.85rem; overflow:hidden; text-overflow:ellipsis; '
-            f'white-space:nowrap;">{name}</span></div>'
-            f'<div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">'
-            f'<span style="font-size:0.85rem; font-weight:500;">${row["total"]:,.0f}</span>'
-            f'{change_html}</div></div>'
+    ranking_container = st.container(border=True)
+    with ranking_container:
+        st.markdown(
+            '<div style="font-size:1rem; font-weight:600;">Top Performing Stores</div>'
+            f'<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.9rem;">'
+            f'By total sales ({snapshot_date.strftime("%b %d")})</div>',
+            unsafe_allow_html=True,
         )
-    st.markdown("".join(rows_html), unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+
+        ranked = day_df.sort_values("total", ascending=False).reset_index(drop=True)
+        rows_html = []
+        for i, row in ranked.iterrows():
+            store_key = row["store"]
+            name = store_names.get(store_key, store_key)
+            change = pct_change(row["total"], day_before_by_store.get(store_key))
+            if change is None:
+                change_html = ""
+            else:
+                arrow = "\u25b2" if change >= 0 else "\u25bc"
+                color = "#22C55E" if change >= 0 else "#EF4444"
+                change_html = f'<span style="color:{color}; font-size:0.78rem;">{arrow} {abs(change):.1f}%</span>'
+            rows_html.append(
+                f'<div style="display:flex; justify-content:space-between; align-items:center; '
+                f'padding:7px 0; border-top:1px solid rgba(255,255,255,0.06);">'
+                f'<div style="display:flex; align-items:center; gap:8px; min-width:0;">'
+                f'<span style="color:#6B7280; font-size:0.78rem; width:16px;">{i + 1}</span>'
+                f'<span style="font-size:0.85rem; overflow:hidden; text-overflow:ellipsis; '
+                f'white-space:nowrap;">{name}</span></div>'
+                f'<div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">'
+                f'<span style="font-size:0.85rem; font-weight:500;">${row["total"]:,.0f}</span>'
+                f'{change_html}</div></div>'
+            )
+        st.markdown("".join(rows_html), unsafe_allow_html=True)
