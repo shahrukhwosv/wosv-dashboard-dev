@@ -20,8 +20,8 @@ already does (keyword "mama", excluding "pacha"), scoped to just
 yesterday. This is a real Lightspeed fetch on every page load (parallel
 across stores), unlike everything else on this page. It's ALSO the one
 metric on this page that intentionally covers all connected stores
-(unrestricted, like Category Sales), not just the Standard Stores list
-the rest of the page uses.
+(unrestricted, excluding pace_only ones - the exact same scope Category
+Sales uses), not just the Standard Stores list the rest of the page uses.
 
 MTD Pace reuses sales_pace.compute_pace() (same projection math as the
 Pace Calculator page) per store, summed into one company-wide projected
@@ -104,7 +104,12 @@ def _fetch_mama_sold(store_keys_tuple, snapshot_date):
     return total, quantity
 
 
-mama_store_keys = sorted(get_page_store_keys(config))  # unrestricted - all 60, unlike the rest of this page
+mama_store_keys = sorted(
+    key for key in get_page_store_keys(config)
+    if not stores[key].get("pace_only")
+)  # unrestricted (all connected stores) but excluding pace_only ones,
+   # exactly matching Category Sales' scope - unlike the rest of this
+   # page, which stays on the Standard Stores list
 
 with st.spinner(f"Fetching Mama's sales for yesterday across {len(mama_store_keys)} store(s)..."):
     mama_total, mama_quantity = _fetch_mama_sold(tuple(mama_store_keys), snapshot_date)
