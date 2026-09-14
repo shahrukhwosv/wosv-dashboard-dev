@@ -29,8 +29,7 @@ st.set_page_config(page_title="WOSV Dashboard", layout="wide")
 
 require_login()
 
-with st.sidebar:
-    st.image("assets/logo.png", use_container_width=True)
+st.logo("assets/logo.png", size="large")
 
 # Keys here must match page_access.PAGE_REGISTRY - that's what the Manage
 # Users page's "Page access" editor grants/revokes per user. Icons use
