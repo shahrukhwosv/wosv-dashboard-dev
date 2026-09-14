@@ -133,7 +133,23 @@ def update_daily_log(config, store_keys, through_date=None, backfill_start=None,
     sheet_id = _pace_log_sheet_id()
     ws = get_worksheet(sheet_id, PACE_LOG_WORKSHEET_NAME)
 
+    # Flushed to the sheet periodically (not just once at the end) so that
+    # a crash partway through a long backfill (e.g. a 429 that survives
+    # api_get's own retries) doesn't throw away everything already
+    # fetched - read_daily_log() on the next attempt will see whatever
+    # was flushed and correctly resume from there instead of restarting
+    # the whole store from day one.
+    FLUSH_EVERY_N_ROWS = 20
     new_rows = []
+    total_added = 0
+
+    def _flush():
+        nonlocal new_rows, total_added
+        if new_rows:
+            ws.append_rows(new_rows, value_input_option="USER_ENTERED")
+            total_added += len(new_rows)
+            new_rows = []
+
     for store_key in store_keys:
         store_rows = existing[existing["store"] == store_key]
         if store_rows.empty:
@@ -159,12 +175,13 @@ def update_daily_log(config, store_keys, through_date=None, backfill_start=None,
             print(f"[{store_key}] Day {day_num} of {total_days} ({current.isoformat()}): ${total:,.2f}")
             if progress_callback:
                 progress_callback(store_key, day_num, total_days, current)
+            if len(new_rows) >= FLUSH_EVERY_N_ROWS:
+                _flush()
             current += timedelta(days=1)
 
-    if new_rows:
-        ws.append_rows(new_rows, value_input_option="USER_ENTERED")
+    _flush()  # any remaining rows under FLUSH_EVERY_N_ROWS from the last store
 
-    return len(new_rows)
+    return total_added
 
 
 def compute_pace(df, store_key, today=None):

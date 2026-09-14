@@ -20,6 +20,7 @@ import os
 import json
 import re
 import time
+import threading
 from datetime import datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 import requests
@@ -209,9 +210,60 @@ def _token_is_expired(store_cfg):
     return datetime.now(timezone.utc) >= expiry.replace(tzinfo=timezone.utc)
 
 
+
+# Lightspeed's documented limit is 1.5 requests/second; this app hit 429s
+# both on the shared OAuth token endpoint (Category Sales, all stores
+# share one client_id) and on a single store's own data endpoints during
+# a long sequential backfill (Pace Calculator). MIN_REQUEST_INTERVAL adds
+# a safety margin over the strict 1/1.5 = 0.667s minimum. Throttling is
+# keyed - per-store for data calls (each store is its own Lightspeed
+# account, so different stores' calls don't need to wait on each other),
+# and by a single shared key for the token endpoint (which genuinely is
+# shared across every store using this app's client_id).
+MIN_REQUEST_INTERVAL_SECONDS = 0.75
+_OAUTH_THROTTLE_KEY = "_oauth_token_endpoint"
+_last_request_times = {}
+_throttle_lock = threading.Lock()
+
+
+def _throttle(key):
+    """Blocks the calling thread as needed so calls sharing the same key
+    stay at least MIN_REQUEST_INTERVAL_SECONDS apart. Thread-safe - safe
+    to call from multiple stores' requests running concurrently (e.g.
+    Category Sales' per-store thread pool)."""
+    with _throttle_lock:
+        now = time.monotonic()
+        last = _last_request_times.get(key, 0)
+        wait = MIN_REQUEST_INTERVAL_SECONDS - (now - last)
+        _last_request_times[key] = max(now, last + MIN_REQUEST_INTERVAL_SECONDS)
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _get_with_retry(url, headers, params=None, retry_key=None, max_retries=3):
+    """requests.get() with automatic backoff-and-retry specifically on 429
+    (Too Many Requests) - throttling alone keeps normal traffic under the
+    limit, but this is a safety net for bursts (concurrent users, a page
+    with many rapid paginated calls) that slip past it anyway, instead of
+    crashing the whole operation (and, for a long-running backfill,
+    losing everything fetched so far - see update_daily_log's incremental
+    sheet writes for the other half of that fix)."""
+    for attempt in range(max_retries + 1):
+        if retry_key:
+            _throttle(retry_key)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code != 429 or attempt == max_retries:
+            return resp
+        # Back off longer than the normal throttle interval - a 429 means
+        # something already slipped past normal throttling.
+        time.sleep(2 * (attempt + 1))
+    return resp  # unreachable, satisfies linters
+
+
 def refresh_access_token(config, store_key):
     """Uses the stored refresh_token to get a new access_token for one store."""
     store_cfg = config["stores"][store_key]
+    _throttle(_OAUTH_THROTTLE_KEY)
     resp = requests.post(
         TOKEN_URL_TEMPLATE,
         data={
@@ -253,18 +305,19 @@ def get_valid_token(config, store_key):
 
 def api_get(config, store_key, path, params=None):
     """Makes an authenticated GET request against one store's API, auto-retrying
-    once on a 401 in case the token just expired mid-session."""
+    once on a 401 in case the token just expired mid-session (and, via
+    _get_with_retry, automatically backing off and retrying on 429s)."""
     store_cfg = config["stores"][store_key]
     token = get_valid_token(config, store_key)
     account_id = store_cfg["account_id"]
     url = f"{API_BASE_TEMPLATE.format(account_id=account_id)}/{path}"
     headers = {"Authorization": f"Bearer {token}"}
 
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    resp = _get_with_retry(url, headers, params=params, retry_key=store_key)
     if resp.status_code == 401:
         token = refresh_access_token(config, store_key)
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp = _get_with_retry(url, headers, params=params, retry_key=store_key)
 
     if resp.status_code >= 400:
         raise RuntimeError(
@@ -773,11 +826,11 @@ def api_get_full_url(config, store_key, url):
     gives us directly (used for cursor-based pagination)."""
     token = get_valid_token(config, store_key)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, headers=headers, timeout=30)
+    resp = _get_with_retry(url, headers, retry_key=store_key)
     if resp.status_code == 401:
         token = refresh_access_token(config, store_key)
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = _get_with_retry(url, headers, retry_key=store_key)
     if resp.status_code >= 400:
         raise RuntimeError(f"Lightspeed API error {resp.status_code}: {resp.text}")
     return resp.json()
