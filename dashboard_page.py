@@ -20,8 +20,8 @@ nightly_refresh.py computes it once a night (the pace log sheet only
 tracks each store's total dollars per day, not a category/keyword
 breakdown). It's also the one metric that intentionally covers all
 connected stores (unrestricted - the same scope Category Sales uses), not
-just the Standard Stores list the rest of the page uses, and the ONLY KPI
-card with no sparkline - the nightly job only keeps the latest day's
+the Pace Calculator Stores list the rest of the page uses, and the ONLY
+KPI card with no sparkline - the nightly job only keeps the latest day's
 snapshot, not a running history, so there's no real trend to draw.
 
 SPARKLINES on the other four cards ARE real, not fabricated - the pace
@@ -45,9 +45,10 @@ Total Sales, Highest Store, and Lowest Store all show a real day-over-day
 % change, computed from the same log data already being read for the
 rest of the page.
 
-Everything except Mama's Sold is restricted to the Standard Stores list,
-same as Commissions/Transactions/Touch Tell/Monthly Reports/Purchase
-Order Status.
+Everything except Mama's Sold uses the Pace Calculator Stores list
+(same scope, and same require_connected=False behavior, as the Pace
+Calculator page) - editable from Manage Users. Mama's Sold stays
+unrestricted regardless.
 
 NOT built (would require inventing functionality/data that doesn't
 exist): a global search bar, a real interactive date-range picker (every
@@ -65,7 +66,7 @@ import streamlit as st
 import lightspeed_client as ls
 from dashboard_data import load_mama_snapshot
 from sales_pace import compute_pace, month_actual_total, read_daily_log, store_local_today
-from store_access import DEFAULT_STANDARD_STORE_KEYS, STANDARD_STORES_LIST, get_page_store_keys
+from store_access import PACE_CALCULATOR_STORES_LIST, get_page_store_keys
 
 CARD_STYLE = (
     "background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); "
@@ -161,13 +162,16 @@ config = ls.load_config()
 stores = config["stores"]
 
 store_keys = list(get_page_store_keys(
-    config, list_name=STANDARD_STORES_LIST, default_keys=DEFAULT_STANDARD_STORE_KEYS
+    config,
+    list_name=PACE_CALCULATOR_STORES_LIST,
+    default_keys=list(stores.keys()),  # matches pace_calculator_page.py's own default
+    require_connected=False,  # matches pace_calculator_page.py - shows every store key in the list, connected or not
 ))
 store_names = {key: stores[key].get("name", key) for key in store_keys}
 
 if not store_keys:
     st.title("Dashboard")
-    st.info("No stores available. Check the Standard Stores list on the Manage Users page.")
+    st.info("No stores available. Check the Pace Calculator Stores list on the Manage Users page.")
     st.stop()
 
 log_df = read_daily_log()
