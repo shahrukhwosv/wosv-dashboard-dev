@@ -25,7 +25,7 @@ here, kept as-is since it predates user accounts.
 
 import streamlit as st
 
-from auth import require_login
+from auth import require_login, log_out
 from page_access import get_accessible_pages, ALL_PAGE_KEYS
 
 st.set_page_config(page_title="WOSV Dashboard", layout="wide")
@@ -35,8 +35,7 @@ require_login()
 with st.sidebar:
     st.caption(f"Logged in as **{st.session_state.username}**")
     if st.button("Log out"):
-        for key in ("user_id", "username", "is_admin"):
-            st.session_state.pop(key, None)
+        log_out()
         st.rerun()
 
 # Keys here must match page_access.PAGE_REGISTRY - that's what the Manage

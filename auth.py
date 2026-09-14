@@ -5,12 +5,29 @@ seeing only the stores they've personally added.
 Requires a database (DATABASE_URL) - same one used for store config. If no
 database is configured, login is disabled entirely and this raises a clear
 error rather than silently allowing everyone in.
+
+SESSION PERSISTENCE: st.session_state alone only survives clicks/reruns
+within the same live browser connection - it does NOT survive an actual
+page reload (Streamlit starts a brand new, empty session_state every
+time). To stay logged in across reloads, a signed random session token is
+stored server-side (see the app_sessions table below) and mirrored into a
+browser cookie via extra_streamlit_components.CookieManager. On each
+require_login() call, if session_state doesn't already have a logged-in
+user, the cookie is checked and the session validated against the
+database before falling back to the login form.
 """
 
 import os
+import secrets
+import hashlib
+from datetime import datetime, timedelta, timezone
+
 import bcrypt
 
 from lightspeed_client import _get_db_connection
+
+SESSION_COOKIE_NAME = "wosv_session"
+SESSION_LIFETIME_DAYS = 30
 
 
 def _ensure_users_table(conn):
@@ -27,6 +44,29 @@ def _ensure_users_table(conn):
             """
         )
     conn.commit()
+
+
+def _ensure_sessions_table(conn):
+    _ensure_users_table(conn)  # FK dependency - must exist first
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                expires_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        )
+    conn.commit()
+
+
+def _hash_token(token):
+    # Session tokens are already high-entropy random values (unlike
+    # passwords), so a fast SHA-256 hash is sufficient here - this is
+    # purely to avoid storing the raw, usable token in the database.
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _require_db():
@@ -86,6 +126,69 @@ def verify_login(username, password):
         conn.close()
 
 
+def create_session_token(user_id):
+    """Creates a new server-side session record and returns the raw token
+    to store in the browser cookie (only the hash is kept in the
+    database)."""
+    conn = _require_db()
+    try:
+        _ensure_sessions_table(conn)
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO app_sessions (token_hash, user_id, expires_at) "
+                "VALUES (%s, %s, %s)",
+                (_hash_token(token), user_id, expires_at),
+            )
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def validate_session_token(token):
+    """Returns (user_id, username, is_admin) if token is a live, unexpired
+    session, or None otherwise (missing, expired, or revoked)."""
+    if not token:
+        return None
+    conn = _require_db()
+    try:
+        _ensure_sessions_table(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT u.id, u.username, u.is_admin
+                FROM app_sessions s
+                JOIN app_users u ON u.id = s.user_id
+                WHERE s.token_hash = %s AND s.expires_at > now()
+                """,
+                (_hash_token(token),),
+            )
+            row = cur.fetchone()
+        return row if row else None
+    finally:
+        conn.close()
+
+
+def revoke_session_token(token):
+    """Deletes a session record (used on logout, or when a password
+    changes) - safe to call even if the token doesn't exist."""
+    if not token:
+        return
+    conn = _require_db()
+    try:
+        _ensure_sessions_table(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM app_sessions WHERE token_hash = %s",
+                (_hash_token(token),),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def list_users():
     """Returns [(id, username, is_admin, created_at), ...] for the admin
     user-management page."""
@@ -104,9 +207,10 @@ def list_users():
 
 def delete_user(user_id, requesting_user_id):
     """
-    Deletes a user account. Their store access grants are cleaned up
-    automatically (user_store_access has ON DELETE CASCADE) - the stores
-    themselves are untouched, they just stop being visible to this user.
+    Deletes a user account. Their store access grants and any active
+    login sessions are cleaned up automatically (user_store_access and
+    app_sessions both have ON DELETE CASCADE) - the stores themselves are
+    untouched, they just stop being visible to this user.
 
     Safety checks (raises ValueError):
       - can't delete your own currently-logged-in account
@@ -137,12 +241,25 @@ def delete_user(user_id, requesting_user_id):
         conn.close()
 
 
+def _get_cookie_manager():
+    """
+    One CookieManager per script run. Its first read on a given browser
+    session can come back empty for a run or two while the underlying
+    component loads in the browser - callers should treat "no cookie yet"
+    as "show the login form" rather than an error, same as never having
+    logged in.
+    """
+    import extra_streamlit_components as stx
+    return stx.CookieManager(key="wosv_cookie_manager")
+
+
 def require_login():
     """
-    Call at the top of app.py before rendering any page. Shows a login form
-    if not already logged in (and st.stop()s), or does nothing if already
-    logged in. Sets st.session_state.user_id / username / is_admin on
-    success.
+    Call at the top of app.py before rendering any page. Restores a
+    logged-in session from a browser cookie if present and still valid
+    (see module docstring), otherwise shows a login form and st.stop()s.
+    Sets st.session_state.user_id / username / is_admin on success either
+    way.
     """
     import streamlit as st
 
@@ -154,7 +271,20 @@ def require_login():
         st.stop()
 
     if st.session_state.get("user_id"):
-        return  # already logged in
+        return  # already logged in this browser session
+
+    cookie_manager = _get_cookie_manager()
+    st.session_state["_cookie_manager"] = cookie_manager  # reused by log_out()
+
+    token = cookie_manager.get(SESSION_COOKIE_NAME)
+    if token:
+        result = validate_session_token(token)
+        if result:
+            user_id, username, is_admin = result
+            st.session_state.user_id = user_id
+            st.session_state.username = username
+            st.session_state.is_admin = is_admin
+            return
 
     st.title("WOSV Dashboard — Log In")
     with st.form("login_form"):
@@ -169,8 +299,29 @@ def require_login():
             st.session_state.user_id = user_id
             st.session_state.username = username
             st.session_state.is_admin = is_admin
+
+            new_token = create_session_token(user_id)
+            expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS)
+            cookie_manager.set(SESSION_COOKIE_NAME, new_token, expires_at=expires_at)
             st.rerun()
         else:
             st.error("Incorrect username or password.")
 
     st.stop()
+
+
+def log_out():
+    """
+    Call from a "Log out" button. Revokes the session server-side, clears
+    the browser cookie, and clears the relevant session_state keys.
+    """
+    import streamlit as st
+
+    cookie_manager = st.session_state.get("_cookie_manager") or _get_cookie_manager()
+    token = cookie_manager.get(SESSION_COOKIE_NAME)
+    if token:
+        revoke_session_token(token)
+        cookie_manager.delete(SESSION_COOKIE_NAME)
+
+    for key in ("user_id", "username", "is_admin"):
+        st.session_state.pop(key, None)

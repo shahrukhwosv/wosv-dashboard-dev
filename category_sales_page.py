@@ -14,10 +14,11 @@ Lets the user search sales three ways:
     search.
   - UPC: type an exact UPC and it matches the one item with that code
 
-Either way, pick a date range (or use the This Month/Last Month/This Year
-shortcuts) and which stores to include, and it shows how much each
-selected store sold for that search over that period, with each store's
-row expandable to show exactly which items (alphabetically) contributed
+Either way, pick a date range (or use the Today/Yesterday/This Month/Last
+Month/This Year shortcuts) and which stores to include, and it shows how
+much each selected store sold for that search over that period, with
+each store's row expandable to show exactly which items (alphabetically)
+contributed
 to that total. A "See Trend" toggle shows a combined (all selected
 stores summed together, not per-store) Units Sold line chart - bucketed
 by day for ranges of 30 days or fewer, or by 7-day chunks (labeled by
@@ -542,17 +543,25 @@ else:
         key=lambda store_key: (connected_stores[store_key].get("name") or store_key).casefold(),
     )
 
-preset_cols = st.columns(3)
-if preset_cols[0].button("This Month", use_container_width=True):
+preset_cols = st.columns(5)
+if preset_cols[0].button("Today", use_container_width=True):
+    today = date.today()
+    st.session_state["cat_sales_start"] = today
+    st.session_state["cat_sales_end"] = today
+if preset_cols[1].button("Yesterday", use_container_width=True):
+    yesterday = date.today() - timedelta(days=1)
+    st.session_state["cat_sales_start"] = yesterday
+    st.session_state["cat_sales_end"] = yesterday
+if preset_cols[2].button("This Month", use_container_width=True):
     today = date.today()
     st.session_state["cat_sales_start"] = today.replace(day=1)
     st.session_state["cat_sales_end"] = today
-if preset_cols[1].button("Last Month", use_container_width=True):
+if preset_cols[3].button("Last Month", use_container_width=True):
     first_of_this_month = date.today().replace(day=1)
     last_of_prev_month = first_of_this_month - timedelta(days=1)
     st.session_state["cat_sales_start"] = last_of_prev_month.replace(day=1)
     st.session_state["cat_sales_end"] = last_of_prev_month
-if preset_cols[2].button("This Year", use_container_width=True):
+if preset_cols[4].button("This Year", use_container_width=True):
     today = date.today()
     st.session_state["cat_sales_start"] = today.replace(month=1, day=1)
     st.session_state["cat_sales_end"] = today
