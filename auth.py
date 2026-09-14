@@ -11,10 +11,12 @@ within the same live browser connection - it does NOT survive an actual
 page reload (Streamlit starts a brand new, empty session_state every
 time). To stay logged in across reloads, a signed random session token is
 stored server-side (see the app_sessions table below) and mirrored into a
-browser cookie via extra_streamlit_components.CookieManager. On each
+browser cookie via streamlit_extras.cookie_manager. On each
 require_login() call, if session_state doesn't already have a logged-in
-user, the cookie is checked and the session validated against the
-database before falling back to the login form.
+user, the cookie is checked (once the component reports it's actually
+synced from the browser - see cookie_manager.ready() below) and the
+session validated against the database before falling back to the login
+form.
 """
 
 import os
@@ -243,14 +245,18 @@ def delete_user(user_id, requesting_user_id):
 
 def _get_cookie_manager():
     """
-    One CookieManager per script run. Its first read on a given browser
-    session can come back empty for a run or two while the underlying
-    component loads in the browser - callers should treat "no cookie yet"
-    as "show the login form" rather than an error, same as never having
-    logged in.
+    One cookie_manager() call per script run (it's fine to call this
+    every run - the component is keyed and reuses its state across
+    reruns). Its first read on a given browser session comes back "not
+    ready" for a run or two while the underlying component's JS actually
+    loads and reports the browser's cookies back to Python - callers MUST
+    check .ready() before trusting .get() results, or they'll
+    incorrectly treat "hasn't synced yet" as "no session" and always show
+    the login form, even for someone with a perfectly valid cookie. This
+    was the bug in an earlier version of this function.
     """
-    import extra_streamlit_components as stx
-    return stx.CookieManager(key="wosv_cookie_manager")
+    from streamlit_extras.cookie_manager import cookie_manager
+    return cookie_manager(key="wosv_cookie_manager")
 
 
 def require_login():
@@ -275,6 +281,14 @@ def require_login():
 
     cookie_manager = _get_cookie_manager()
     st.session_state["_cookie_manager"] = cookie_manager  # reused by log_out()
+
+    if not cookie_manager.ready():
+        # Browser cookie sync hasn't completed yet - stopping here (rather
+        # than falling through to the login form) lets the automatic
+        # rerun the component triggers once it's synced retry this whole
+        # function, this time with .ready() == True.
+        st.info("Loading…")
+        st.stop()
 
     token = cookie_manager.get(SESSION_COOKIE_NAME)
     if token:
@@ -301,8 +315,12 @@ def require_login():
             st.session_state.is_admin = is_admin
 
             new_token = create_session_token(user_id)
-            expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS)
-            cookie_manager.set(SESSION_COOKIE_NAME, new_token, expires_at=expires_at)
+            cookie_manager.set(
+                SESSION_COOKIE_NAME,
+                new_token,
+                max_age=timedelta(days=SESSION_LIFETIME_DAYS),
+                secure=True,
+            )
             st.rerun()
         else:
             st.error("Incorrect username or password.")
@@ -318,10 +336,11 @@ def log_out():
     import streamlit as st
 
     cookie_manager = st.session_state.get("_cookie_manager") or _get_cookie_manager()
-    token = cookie_manager.get(SESSION_COOKIE_NAME)
-    if token:
-        revoke_session_token(token)
-        cookie_manager.delete(SESSION_COOKIE_NAME)
+    if cookie_manager.ready():
+        token = cookie_manager.get(SESSION_COOKIE_NAME)
+        if token:
+            revoke_session_token(token)
+            cookie_manager.delete(SESSION_COOKIE_NAME)
 
     for key in ("user_id", "username", "is_admin"):
         st.session_state.pop(key, None)
