@@ -33,14 +33,19 @@ Restricted to the Standard Stores list, same as Commissions/Transactions/
 Touch Tell/Monthly Reports.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
 
 import lightspeed_client as ls
-from purchase_order_status import fetch_purchase_order_status, fetch_vendor_lookup
-from sales_pace import store_local_today
+from purchase_order_status import (
+    fetch_purchase_order_status,
+    fetch_vendor_lookup,
+    save_po_status_snapshot,
+    load_po_status_snapshot,
+)
+from sales_pace import store_local_today, STORE_TIMEZONE
 from store_access import get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
 
 STAGE_LABELS = {
@@ -124,11 +129,29 @@ if st.button("Load purchase orders", type="primary"):
                     })
 
         st.session_state["po_status_rows"] = all_rows
+        st.session_state["po_status_loaded_at"] = datetime.now(timezone.utc)
+        save_po_status_snapshot(all_rows)
 
 rows = st.session_state.get("po_status_rows")
+loaded_at = st.session_state.get("po_status_loaded_at")
+
+if rows is None:
+    # Nothing loaded yet in this browser session - fall back to whatever
+    # was last saved (possibly by someone else, possibly before a
+    # logout/login), instead of showing an empty page until someone
+    # clicks the button again.
+    rows, loaded_at = load_po_status_snapshot()
+    if rows is not None:
+        st.session_state["po_status_rows"] = rows
+        st.session_state["po_status_loaded_at"] = loaded_at
+
 if rows is None:
     st.info("Click \"Load purchase orders\" to fetch current data.")
     st.stop()
+
+if loaded_at:
+    local_time = loaded_at.astimezone(STORE_TIMEZONE)
+    st.caption(f"Last loaded {local_time.strftime('%b %d, %Y %I:%M %p')} (Central) - click \"Load purchase orders\" above to refresh.")
 
 full_df = pd.DataFrame(rows)
 

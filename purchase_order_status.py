@@ -25,9 +25,10 @@ FIELD CONFIRMATION STATUS:
     empty even for POs you know have a note, dump one raw Order with
     inspect_sample.py and we'll check the actual field name.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+import json
 
-from lightspeed_client import fetch_all
+from lightspeed_client import fetch_all, _get_db_connection
 from lightspeed_po import derive_stage
 
 
@@ -78,3 +79,92 @@ def fetch_purchase_order_status(config, store_key, months_back=6):
             "total": float(po.get("totalCost", 0) or 0),
         })
     return results
+
+
+# ----------------------------------------------------------------------
+# Snapshot persistence
+#
+# The Purchase Order Status page's table is expensive to build (one
+# Lightspeed fetch per store), so rather than re-fetching on every page
+# view, the last-loaded table is saved here and shown until "Load
+# purchase orders" is clicked again - deliberately persisted to the
+# database (not just st.session_state) so it survives a logout/login or
+# opening the page in a fresh session, not just clicks within one
+# browser tab. There's only ever one saved snapshot (not one per user) -
+# whoever last clicked "Load purchase orders" is what everyone sees.
+# ----------------------------------------------------------------------
+
+def _ensure_snapshot_table(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS po_status_snapshot (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                rows_json JSONB NOT NULL,
+                loaded_at TIMESTAMPTZ NOT NULL,
+                CONSTRAINT po_status_snapshot_single_row CHECK (id = 1)
+            )
+            """
+        )
+    conn.commit()
+
+
+def save_po_status_snapshot(rows):
+    """Persists the last-loaded table. Silently does nothing if no
+    database is configured - the page just won't have anything to fall
+    back on between sessions in that case, same as before this existed."""
+    conn = _get_db_connection()
+    if conn is None:
+        return
+    try:
+        _ensure_snapshot_table(conn)
+        serializable_rows = []
+        for row in rows:
+            row_copy = dict(row)
+            for key in ("Created", "Ordered"):
+                if isinstance(row_copy.get(key), date):
+                    row_copy[key] = row_copy[key].isoformat()
+            serializable_rows.append(row_copy)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO po_status_snapshot (id, rows_json, loaded_at)
+                VALUES (1, %s, now())
+                ON CONFLICT (id) DO UPDATE
+                    SET rows_json = EXCLUDED.rows_json, loaded_at = now()
+                """,
+                (json.dumps(serializable_rows),),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_po_status_snapshot():
+    """Returns (rows, loaded_at) from the last save_po_status_snapshot()
+    call, or (None, None) if nothing's been saved yet (or no database is
+    configured)."""
+    conn = _get_db_connection()
+    if conn is None:
+        return None, None
+    try:
+        _ensure_snapshot_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT rows_json, loaded_at FROM po_status_snapshot WHERE id = 1")
+            row = cur.fetchone()
+        if not row:
+            return None, None
+        rows_json, loaded_at = row
+        rows = []
+        for r in rows_json:
+            r = dict(r)
+            for key in ("Created", "Ordered"):
+                if r.get(key):
+                    try:
+                        r[key] = date.fromisoformat(r[key])
+                    except ValueError:
+                        pass
+            rows.append(r)
+        return rows, loaded_at
+    finally:
+        conn.close()
