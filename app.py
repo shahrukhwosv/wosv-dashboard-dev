@@ -30,22 +30,31 @@ st.set_page_config(page_title="WOSV Dashboard", layout="wide")
 require_login()
 
 with st.sidebar:
-    st.caption(f"Logged in as **{st.session_state.username}**")
-    if st.button("Log out"):
-        log_out()
-        st.rerun()
+    st.markdown(
+        """
+        <div style="padding: 0.25rem 0 1rem 0; line-height: 1.1;">
+            <div style="font-size: 1.5rem; font-weight: 700; letter-spacing: 0.02em;">WOSV</div>
+            <div style="font-size: 0.7rem; color: var(--text-secondary, #9CA3AF); letter-spacing: 0.08em; margin-top: 2px;">
+                WORLD OF SMOKE &amp; VAPE
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # Keys here must match page_access.PAGE_REGISTRY - that's what the Manage
-# Users page's "Page access" editor grants/revokes per user.
+# Users page's "Page access" editor grants/revokes per user. Icons use
+# Streamlit's built-in Material Symbols support (icon=":material/name:")
+# instead of emoji, for a visually consistent icon set.
 page_objects = {
-    "dashboard": st.Page("dashboard_page.py", title="Dashboard", icon="🏠"),
-    "commissions": st.Page("commission_page.py", title="Commissions", icon="💰"),
-    "transactions": st.Page("reconciliation_page.py", title="Transactions", icon="💳"),
-    "touch_tell": st.Page("touch_tell_page.py", title="Touch Tell", icon="📦"),
-    "pace_calculator": st.Page("pace_calculator_page.py", title="Pace Calculator", icon="📈"),
-    "category_sales": st.Page("category_sales_page.py", title="Category Sales", icon="🔍"),
-    "monthly_reports": st.Page("monthly_reports_page.py", title="Monthly Reports", icon="🗂️"),
-    "purchase_order_status": st.Page("purchase_order_status_page.py", title="Purchase Order Status", icon="📋"),
+    "dashboard": st.Page("dashboard_page.py", title="Dashboard", icon=":material/dashboard:"),
+    "commissions": st.Page("commission_page.py", title="Commissions", icon=":material/payments:"),
+    "transactions": st.Page("reconciliation_page.py", title="Transactions", icon=":material/receipt_long:"),
+    "touch_tell": st.Page("touch_tell_page.py", title="Touch Tell", icon=":material/inventory_2:"),
+    "pace_calculator": st.Page("pace_calculator_page.py", title="Pace Calculator", icon=":material/trending_up:"),
+    "category_sales": st.Page("category_sales_page.py", title="Category Sales", icon=":material/search:"),
+    "monthly_reports": st.Page("monthly_reports_page.py", title="Monthly Reports", icon=":material/summarize:"),
+    "purchase_order_status": st.Page("purchase_order_status_page.py", title="Purchase Order Status", icon=":material/assignment:"),
 }
 
 if st.session_state.get("is_admin"):
@@ -78,11 +87,32 @@ if not pages:
 
 if st.session_state.get("is_admin"):
     pages.append(
-        st.Page("add_store_page.py", title="Add Store", icon="➕")
+        st.Page("add_store_page.py", title="Add Store", icon=":material/add_business:")
     )
     pages.append(
-        st.Page("manage_users_page.py", title="Manage Users", icon="👤")
+        st.Page("manage_users_page.py", title="Manage Users", icon=":material/manage_accounts:")
     )
 
 pg = st.navigation({"WOSV Dashboard": pages})
+
+with st.sidebar:
+    # Rendered after st.navigation() so it appears below the nav list -
+    # Streamlit's sidebar has no official "pin to bottom of viewport" API,
+    # so this is "last in the sidebar" rather than glued to the exact
+    # bottom of the screen.
+    st.divider()
+    role_label = "Admin" if st.session_state.get("is_admin") else "User"
+    st.markdown(
+        f"""
+        <div style="line-height: 1.3; margin-bottom: 0.5rem;">
+            <div style="font-size: 0.9rem; font-weight: 500;">{st.session_state.username}</div>
+            <div style="font-size: 0.75rem; color: var(--text-secondary, #9CA3AF);">{role_label}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Log out", use_container_width=True):
+        log_out()
+        st.rerun()
+
 pg.run()
