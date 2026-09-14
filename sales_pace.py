@@ -104,7 +104,7 @@ def get_daily_total(config, store_key, for_date):
     return sum(_sale_amount(s) for s in sales)
 
 
-def update_daily_log(config, store_keys, through_date=None, backfill_start=None):
+def update_daily_log(config, store_keys, through_date=None, backfill_start=None, progress_callback=None):
     """
     Fetches and appends any missing days for each store, from the day after
     its last logged date through `through_date` (defaults to yesterday -
@@ -114,6 +114,13 @@ def update_daily_log(config, store_keys, through_date=None, backfill_start=None)
     to Jan 1 of the current year). This first run per store can be slow -
     see backfill_pace_log.py to run it once, up front, outside the Streamlit
     request cycle rather than triggering it from the page's refresh button.
+
+    progress_callback, if given, is called as
+    progress_callback(store_key, day_num, total_days, current_date) - once
+    with day_num=0 right when a store's total_days is known (current_date
+    is None at that point - nothing's been fetched yet), then again after
+    each individual day is fetched. Optional - CLI callers (backfill_pace_log.py)
+    don't need it, only the Pace Calculator page's progress bar does.
 
     Returns the number of (store, day) rows appended.
     """
@@ -140,6 +147,8 @@ def update_daily_log(config, store_keys, through_date=None, backfill_start=None)
             continue
 
         print(f"[{store_key}] Backfilling {total_days} day(s): {start.isoformat()} through {through_date.isoformat()}")
+        if progress_callback:
+            progress_callback(store_key, 0, total_days, None)
 
         current = start
         day_num = 0
@@ -148,6 +157,8 @@ def update_daily_log(config, store_keys, through_date=None, backfill_start=None)
             total = get_daily_total(config, store_key, current)
             new_rows.append([current.isoformat(), store_key, total])
             print(f"[{store_key}] Day {day_num} of {total_days} ({current.isoformat()}): ${total:,.2f}")
+            if progress_callback:
+                progress_callback(store_key, day_num, total_days, current)
             current += timedelta(days=1)
 
     if new_rows:

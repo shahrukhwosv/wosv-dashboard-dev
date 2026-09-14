@@ -53,8 +53,23 @@ with col1:
         st.success("Reloaded.")
 with col2:
     if st.button("Fetch missing days from Lightspeed"):
-        with st.spinner("Fetching any missing days from Lightspeed - this can take a while for stores with little/no history yet..."):
-            added = update_daily_log(config, store_keys)
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def _show_progress(store_key, day_num, total_days, current_date):
+            store_name = store_names.get(store_key, store_key)
+            progress_bar.progress(day_num / total_days if total_days else 0.0)
+            if current_date is None:
+                status_text.write(f"**{store_name}**: starting - {total_days} day(s) to fetch...")
+            else:
+                status_text.write(
+                    f"**{store_name}**: day {day_num} of {total_days} ({current_date.isoformat()})"
+                )
+
+        added = update_daily_log(config, store_keys, progress_callback=_show_progress)
+
+        progress_bar.empty()
+        status_text.empty()
         st.success(f"Log updated - added {added} new day(s) of data.")
         st.cache_data.clear()
 
