@@ -12,7 +12,8 @@ Run with:  streamlit run app.py
 
 The actual page content lives in commission_page.py, reconciliation_page.py,
 touch_tell_page.py, pace_calculator_page.py, category_sales_page.py,
-monthly_reports_page.py, add_store_page.py, and manage_users_page.py.
+monthly_reports_page.py, purchase_order_status_page.py, add_store_page.py,
+and manage_users_page.py.
 dashboard_page.py still exists in the repo but is TEMPORARILY not linked
 in the sidebar - re-add it to the `page_objects` dict below when ready
 (and to page_access.PAGE_REGISTRY, if regular users should be able to be
@@ -47,6 +48,7 @@ page_objects = {
     "pace_calculator": st.Page("pace_calculator_page.py", title="Pace Calculator", icon="📈"),
     "category_sales": st.Page("category_sales_page.py", title="Category Sales", icon="🔍"),
     "monthly_reports": st.Page("monthly_reports_page.py", title="Monthly Reports", icon="🗂️"),
+    "purchase_order_status": st.Page("purchase_order_status_page.py", title="Purchase Order Status", icon="📋"),
 }
 
 if st.session_state.get("is_admin"):

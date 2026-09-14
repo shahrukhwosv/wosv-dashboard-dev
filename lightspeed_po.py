@@ -43,7 +43,7 @@ STAGE_ORDER = ["open", "ordered", "check_in", "finished"]
 READY_STAGES = {"ordered", "check_in", "finished"}
 
 
-def _derive_stage(order):
+def derive_stage(order):
     """Confirmed rule - see module docstring."""
     complete = str(order.get("complete", "false")).strip().lower() == "true"
     if complete:
@@ -106,7 +106,7 @@ def fetch_purchase_orders_for_vendor(config, store_key, vendor_name, months_back
             raw = [raw]
 
         for po in raw:
-            stage = _derive_stage(po)
+            stage = derive_stage(po)
             results.append({
                 "po_id": po.get("orderID"),
                 "reference_number": str(po.get(FIELD_REFERENCE_NUM, "") or "").strip(),
