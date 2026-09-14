@@ -399,7 +399,9 @@ def build_name_options(categories_by_store):
 
 
 def run_category_report(store_keys, categories_by_store, selected_category, start_date, end_date):
-    """Fetches category sales for each store in parallel."""
+    """Fetches category sales for each store in parallel. A store that
+    errors out (e.g. limited API access) is logged and treated as no
+    data, rather than crashing the whole report."""
     config = ls.load_config()
     results = {}
 
@@ -411,9 +413,13 @@ def run_category_report(store_keys, categories_by_store, selected_category, star
         )
         if category_id is None:
             return store_key, None  # no matching category name at this store
-        return store_key, ls.fetch_category_sales(
-            config, store_key, category_id, start_date, end_date
-        )
+        try:
+            return store_key, ls.fetch_category_sales(
+                config, store_key, category_id, start_date, end_date
+            )
+        except Exception as e:
+            print(f"[{store_key}] Category sales fetch failed: {e}")
+            return store_key, None
 
     with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
         futures = [pool.submit(_fetch_one, store_key) for store_key in store_keys]
@@ -425,14 +431,20 @@ def run_category_report(store_keys, categories_by_store, selected_category, star
 
 
 def run_keyword_report(store_keys, keyword, exclude_keyword, start_date, end_date):
-    """Fetches keyword sales for each store in parallel."""
+    """Fetches keyword sales for each store in parallel. A store that
+    errors out (e.g. limited API access) is logged and treated as no
+    data, rather than crashing the whole report."""
     config = ls.load_config()
     results = {}
 
     def _fetch_one(store_key):
-        return store_key, ls.fetch_keyword_sales(
-            config, store_key, keyword, start_date, end_date, exclude_keyword=exclude_keyword
-        )
+        try:
+            return store_key, ls.fetch_keyword_sales(
+                config, store_key, keyword, start_date, end_date, exclude_keyword=exclude_keyword
+            )
+        except Exception as e:
+            print(f"[{store_key}] Keyword sales fetch failed: {e}")
+            return store_key, None
 
     with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
         futures = [pool.submit(_fetch_one, store_key) for store_key in store_keys]
@@ -444,12 +456,18 @@ def run_keyword_report(store_keys, keyword, exclude_keyword, start_date, end_dat
 
 
 def run_upc_report(store_keys, upc, start_date, end_date):
-    """Fetches UPC sales for each store in parallel."""
+    """Fetches UPC sales for each store in parallel. A store that errors
+    out (e.g. limited API access) is logged and treated as no data,
+    rather than crashing the whole report."""
     config = ls.load_config()
     results = {}
 
     def _fetch_one(store_key):
-        return store_key, ls.fetch_upc_sales(config, store_key, upc, start_date, end_date)
+        try:
+            return store_key, ls.fetch_upc_sales(config, store_key, upc, start_date, end_date)
+        except Exception as e:
+            print(f"[{store_key}] UPC sales fetch failed: {e}")
+            return store_key, None
 
     with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
         futures = [pool.submit(_fetch_one, store_key) for store_key in store_keys]
@@ -463,10 +481,10 @@ def run_upc_report(store_keys, upc, start_date, end_date):
 config = ls.load_config()
 stores = config["stores"]
 
-visible_keys = get_page_store_keys(config)  # no list_name - unrestricted, same as before
+visible_keys = get_page_store_keys(config)  # no list_name - unrestricted
 connected_stores = {
     key: val for key, val in stores.items()
-    if key in visible_keys and not val.get("pace_only")
+    if key in visible_keys
 }
 
 if not connected_stores:

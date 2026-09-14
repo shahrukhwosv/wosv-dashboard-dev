@@ -20,8 +20,10 @@ already does (keyword "mama", excluding "pacha"), scoped to just
 yesterday. This is a real Lightspeed fetch on every page load (parallel
 across stores), unlike everything else on this page. It's ALSO the one
 metric on this page that intentionally covers all connected stores
-(unrestricted, excluding pace_only ones - the exact same scope Category
-Sales uses), not just the Standard Stores list the rest of the page uses.
+(unrestricted - the exact same scope Category Sales uses), not just the
+Standard Stores list the rest of the page uses. If a particular store's
+fetch fails (e.g. limited API access), it's logged and excluded from the
+total with a note, rather than crashing the whole page.
 
 MTD Pace reuses sales_pace.compute_pace() (same projection math as the
 Pace Calculator page) per store, summed into one company-wide projected
@@ -92,27 +94,34 @@ st.caption(f"Showing {snapshot_date.strftime('%A, %B %d')} across {len(store_key
 def _fetch_mama_sold(store_keys_tuple, snapshot_date):
     total = 0.0
     quantity = 0.0
+    failed_stores = []
+
+    def _fetch_one(store_key):
+        return ls.fetch_keyword_sales(config, store_key, "mama", snapshot_date, snapshot_date, "pacha")
+
     with ThreadPoolExecutor(max_workers=max(len(store_keys_tuple), 1)) as pool:
-        futures = [
-            pool.submit(ls.fetch_keyword_sales, config, store_key, "mama", snapshot_date, snapshot_date, "pacha")
-            for store_key in store_keys_tuple
-        ]
+        futures = {pool.submit(_fetch_one, store_key): store_key for store_key in store_keys_tuple}
         for future in as_completed(futures):
-            result = future.result()
+            store_key = futures[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                print(f"[{store_key}] Mama's sold fetch failed: {e}")
+                failed_stores.append(store_key)
+                continue
             total += result["total"]
             quantity += result["quantity"]
-    return total, quantity
+    return total, quantity, failed_stores
 
 
-mama_store_keys = sorted(
-    key for key in get_page_store_keys(config)
-    if not stores[key].get("pace_only")
-)  # unrestricted (all connected stores) but excluding pace_only ones,
-   # exactly matching Category Sales' scope - unlike the rest of this
-   # page, which stays on the Standard Stores list
+mama_store_keys = sorted(get_page_store_keys(config))  # unrestricted - every connected store, unlike the rest of this page
 
 with st.spinner(f"Fetching Mama's sales for yesterday across {len(mama_store_keys)} store(s)..."):
-    mama_total, mama_quantity = _fetch_mama_sold(tuple(mama_store_keys), snapshot_date)
+    mama_total, mama_quantity, mama_failed_stores = _fetch_mama_sold(tuple(mama_store_keys), snapshot_date)
+
+if mama_failed_stores:
+    failed_names = ", ".join(stores[k].get("name", k) for k in mama_failed_stores)
+    st.caption(f"⚠️ Mama's Sold couldn't be fetched for: {failed_names} - excluded from the total below.")
 
 # --- Month-to-date pace, company-wide ---
 today = store_local_today()
