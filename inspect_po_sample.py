@@ -1,22 +1,28 @@
 """
 Run this to see exactly what one real Purchase Order (Lightspeed's
-"Order" resource) looks like - specifically to nail down which field
-actually holds the vendor's order/invoice number that district managers
-type into the PO's General Notes field, since purchase_order_status.py
-currently guesses between "notes" and "note" (see that file's docstring)
-rather than using a confirmed field name.
+"Order" resource) looks like, WITH its Note relation loaded - to nail
+down the exact field name holding the vendor's order/invoice number
+that district managers type into the PO's General Notes field.
+
+Confirmed so far: an Order record itself only has a noteID pointing at
+a separate related record - it does NOT have the note text directly on
+it. purchase_order_status.py now requests load_relations=["Note"] and
+guesses at a few plausible key names for the text within that relation
+(note/text/memo/body) - still not confirmed. This script loads the same
+relation so you can see its actual shape and field names directly.
 
 Usage:
   python inspect_po_sample.py store_1
       Dumps up to 5 recent POs - look through them for the one you know
-      has a note on it, and check which key actually holds that text.
+      has a note on it, and check the "Note" section for the actual key
+      holding that text.
 
   python inspect_po_sample.py store_1 PO-1234
       Dumps just the one PO with that refNum (use a PO you already know
       has a note on it, for a faster/more direct check).
 
-Paste whichever raw JSON has the note back to Claude and we'll lock in
-the correct field name in purchase_order_status.py.
+Paste the "Note" section back to Claude and we'll lock in the correct
+field name in purchase_order_status.py's _extract_note_text().
 """
 import sys
 import json
@@ -35,7 +41,11 @@ def main():
     config = load_config()
 
     since = datetime.now(timezone.utc) - timedelta(days=180)
-    params = [("limit", 100), ("createTime", f">,{since.isoformat(timespec='seconds')}")]
+    params = [
+        ("limit", 100),
+        ("createTime", f">,{since.isoformat(timespec='seconds')}"),
+        ("load_relations", '["Note"]'),
+    ]
     orders = fetch_all(config, store_key, "Order.json", params=params, record_key="Order")
 
     if not orders:

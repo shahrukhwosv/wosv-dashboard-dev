@@ -18,17 +18,17 @@ FIELD CONFIRMATION STATUS:
     fetch_purchase_orders_for_vendor (production Touch Tell code), so
     trusted here too, for both filtering and the "days since created"
     column.
-  - notes: NOT independently confirmed against a real API response, and
-    a user report that a known PO's note wasn't showing up confirms the
-    original "notes" guess was likely wrong. Lightspeed's own UI docs
-    call this the "General Notes" field (singular), which - going by how
-    every other single-value field in this API is named (refNum,
-    orderedDate, not refNums/orderedDates) - suggests the real JSON
-    field is "note", not "notes". Now tries both (po.get("notes") or
-    po.get("note")) so it works either way, but this still isn't
-    confirmed - run inspect_po_sample.py against a store with a PO you
-    know has a note on it and paste the output back to nail this down
-    for certain.
+  - notes: CONFIRMED the earlier guesses (top-level "notes"/"note"
+    fields) were wrong - a real Order record has no note text on it
+    directly, only a noteID pointing at a separate related record (same
+    pattern this API uses for categoryID/vendorID/discountID elsewhere).
+    Now requests load_relations=["Note"] and pulls text out of that
+    relation instead. The exact field name for the note's text WITHIN
+    that relation still isn't confirmed (tries "note"/"text"/"memo"/
+    "body") - if this is still blank after deploying, run
+    inspect_po_sample.py again (now also loads the Note relation) against
+    a PO you know has a note on it and paste back the "Note" section so
+    we can pin down the exact key.
 """
 from datetime import date, datetime, timedelta, timezone
 import json
@@ -41,6 +41,31 @@ def fetch_vendor_lookup(config, store_key):
     """Returns {vendorID: name} for one store."""
     vendors = fetch_all(config, store_key, "Vendor.json", params={"limit": 200})
     return {str(v.get("vendorID", "")): v.get("name", "") for v in vendors}
+
+
+def _extract_note_text(po):
+    """
+    Pulls the note's text out of the loaded Note relation (see module
+    docstring - Order records only carry a noteID, not the text itself).
+    Defensive about both the relation's shape (a single dict, or a list
+    if an order can somehow have more than one) and which key inside it
+    actually holds the text (not confirmed - tries a few plausible
+    names). Returns "" if there's no note relation at all, or none of
+    the guessed keys have text in them.
+    """
+    note_rel = po.get("Note")
+    if not note_rel:
+        return ""
+    entries = note_rel if isinstance(note_rel, list) else [note_rel]
+    texts = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        text = entry.get("note") or entry.get("text") or entry.get("memo") or entry.get("body") or ""
+        text = str(text).strip()
+        if text:
+            texts.append(text)
+    return " | ".join(texts)
 
 
 def fetch_purchase_order_status(config, store_key, months_back=6):
@@ -66,6 +91,7 @@ def fetch_purchase_order_status(config, store_key, months_back=6):
     params = [
         ("limit", 100),
         ("createTime", f">,{since.isoformat(timespec='seconds')}"),
+        ("load_relations", '["Note"]'),
     ]
     orders = fetch_all(config, store_key, "Order.json", params=params, record_key="Order")
 
@@ -76,7 +102,7 @@ def fetch_purchase_order_status(config, store_key, months_back=6):
             "po_id": po.get("orderID"),
             "reference_number": str(po.get("refNum", "") or "").strip(),
             "vendor_id": str(po.get("vendorID", "") or ""),
-            "notes": str(po.get("notes") or po.get("note") or "").strip(),
+            "notes": _extract_note_text(po),
             "stage": derive_stage(po),
             "create_time": po.get("createTime") or None,
             "ordered_date": po.get("orderedDate") or None,
