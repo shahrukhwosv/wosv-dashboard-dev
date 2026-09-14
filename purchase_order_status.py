@@ -18,12 +18,17 @@ FIELD CONFIRMATION STATUS:
     fetch_purchase_orders_for_vendor (production Touch Tell code), so
     trusted here too, for both filtering and the "days since created"
     column.
-  - notes: NOT independently confirmed against a real API response.
-    Included because that's where district managers are being asked to
-    record the vendor's own order/invoice number (Lightspeed's own
-    reference number doesn't always match it) - if this comes back
-    empty even for POs you know have a note, dump one raw Order with
-    inspect_sample.py and we'll check the actual field name.
+  - notes: NOT independently confirmed against a real API response, and
+    a user report that a known PO's note wasn't showing up confirms the
+    original "notes" guess was likely wrong. Lightspeed's own UI docs
+    call this the "General Notes" field (singular), which - going by how
+    every other single-value field in this API is named (refNum,
+    orderedDate, not refNums/orderedDates) - suggests the real JSON
+    field is "note", not "notes". Now tries both (po.get("notes") or
+    po.get("note")) so it works either way, but this still isn't
+    confirmed - run inspect_po_sample.py against a store with a PO you
+    know has a note on it and paste the output back to nail this down
+    for certain.
 """
 from datetime import date, datetime, timedelta, timezone
 import json
@@ -71,7 +76,7 @@ def fetch_purchase_order_status(config, store_key, months_back=6):
             "po_id": po.get("orderID"),
             "reference_number": str(po.get("refNum", "") or "").strip(),
             "vendor_id": str(po.get("vendorID", "") or ""),
-            "notes": str(po.get("notes", "") or "").strip(),
+            "notes": str(po.get("notes") or po.get("note") or "").strip(),
             "stage": derive_stage(po),
             "create_time": po.get("createTime") or None,
             "ordered_date": po.get("orderedDate") or None,
