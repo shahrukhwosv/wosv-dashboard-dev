@@ -18,14 +18,18 @@ tracks each store's total dollars per day, not a category/keyword
 breakdown, so this uses the same live keyword search Category Sales
 already does (keyword "mama", excluding "pacha"), scoped to just
 yesterday. This is a real Lightspeed fetch on every page load (parallel
-across stores), unlike everything else on this page.
+across stores), unlike everything else on this page. It's ALSO the one
+metric on this page that intentionally covers all connected stores
+(unrestricted, like Category Sales), not just the Standard Stores list
+the rest of the page uses.
 
 MTD Pace reuses sales_pace.compute_pace() (same projection math as the
 Pace Calculator page) per store, summed into one company-wide projected
 total for the current month.
 
-Restricted to the Standard Stores list, same as Commissions/Transactions/
-Touch Tell/Monthly Reports/Purchase Order Status.
+Everything except Mama's Sold is restricted to the Standard Stores list,
+same as Commissions/Transactions/Touch Tell/Monthly Reports/Purchase
+Order Status.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -100,8 +104,10 @@ def _fetch_mama_sold(store_keys_tuple, snapshot_date):
     return total, quantity
 
 
-with st.spinner("Fetching Mama's sales for yesterday..."):
-    mama_total, mama_quantity = _fetch_mama_sold(tuple(store_keys), snapshot_date)
+mama_store_keys = sorted(get_page_store_keys(config))  # unrestricted - all 60, unlike the rest of this page
+
+with st.spinner(f"Fetching Mama's sales for yesterday across {len(mama_store_keys)} store(s)..."):
+    mama_total, mama_quantity = _fetch_mama_sold(tuple(mama_store_keys), snapshot_date)
 
 # --- Month-to-date pace, company-wide ---
 today = store_local_today()
