@@ -82,7 +82,7 @@ if st.session_state.get("is_admin"):
         st.Page("manage_users_page.py", title="Manage Users", icon=":material/manage_accounts:")
     )
 
-pg = st.navigation({"WOSV Dashboard": pages})
+pg = st.navigation(pages)
 
 with st.sidebar:
     # Rendered after st.navigation() so it appears below the nav list -
