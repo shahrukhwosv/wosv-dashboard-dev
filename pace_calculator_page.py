@@ -32,6 +32,7 @@ from lightspeed_client import load_config
 from store_access import get_page_store_keys, PACE_CALCULATOR_STORES_LIST
 from sales_pace import compute_pace, month_actual_total, read_daily_log, update_daily_log
 from pace_pdf_report import MONTH_NAMES, build_monthly_pdf
+from store_regions import NORTH_STORES, SOUTH_STORES
 
 st.title("Sales Pace Calculator")
 
@@ -300,13 +301,6 @@ else:
         """,
         height=table_height,
     )
-
-    # Regional groupings, matched by store name (not store_key, since key
-    # numbering doesn't reflect any north/south grouping). Note: the config
-    # names this store "Greenville" (not "Lower Greenville") - matched
-    # accordingly below.
-    NORTH_STORES = {"Aubrey", "Rowlett", "Princeton", "Frisco", "Liquor Depot"}
-    SOUTH_STORES = {"Oak Lawn", "Greenville", "West Greenville", "Lovers", "Hillcrest"}
 
     pace_by_name = {row["store"]: row["projected_monthly"] for row in rows}
 

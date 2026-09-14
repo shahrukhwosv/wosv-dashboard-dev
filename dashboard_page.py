@@ -68,6 +68,7 @@ import streamlit as st
 import lightspeed_client as ls
 from dashboard_data import load_mama_snapshot
 from sales_pace import compute_pace, month_actual_total, read_daily_log, store_local_today
+from store_regions import NORTH_STORES, SOUTH_STORES
 from store_access import PACE_CALCULATOR_STORES_LIST, get_page_store_keys
 
 CARD_STYLE = (
@@ -357,7 +358,7 @@ trend_df = accessible_log_df[accessible_log_df["date"] >= earliest_start].copy()
 chart_col, ranking_col = st.columns([2, 1])
 
 with chart_col:
-    chart_container = st.container(border=True, height=620)
+    chart_container = st.container(border=True, height=440)
     with chart_container:
         title_col, metric_col, popover_col = st.columns([2.4, 1, 0.9])
         with title_col:
@@ -384,11 +385,23 @@ with chart_col:
         else:
             with popover_col:
                 with st.popover("Stores", use_container_width=True):
+                    preset_col1, preset_col2 = st.columns(2)
+                    if preset_col1.button("North Stores", use_container_width=True):
+                        st.session_state["dashboard_trend_stores"] = sorted(
+                            NORTH_STORES & set(store_names.values())
+                        )
+                        st.rerun()
+                    if preset_col2.button("South Stores", use_container_width=True):
+                        st.session_state["dashboard_trend_stores"] = sorted(
+                            SOUTH_STORES & set(store_names.values())
+                        )
+                        st.rerun()
                     selected_names = st.multiselect(
                         "Stores to show",
                         options=sorted(store_names.values()),
                         default=sorted(store_names.values()),
                         label_visibility="collapsed",
+                        key="dashboard_trend_stores",
                     )
 
             trend_df["month"] = trend_df["date"].apply(lambda d: d.strftime("%b %Y"))
@@ -415,14 +428,14 @@ with chart_col:
                                          legend=alt.Legend(orient="bottom", columns=4, symbolType="stroke")),
                         tooltip=["store_name", "month", alt.Tooltip("total:Q", format="$,.2f")],
                     )
-                    .properties(height=320)
+                    .properties(height=220)
                     .configure_view(strokeWidth=0)
                     .configure_axis(labelColor="#9CA3AF", titleColor="#9CA3AF")
                 )
                 st.altair_chart(chart, use_container_width=True)
 
 with ranking_col:
-    ranking_container = st.container(border=True, height=620)
+    ranking_container = st.container(border=True, height=440)
     with ranking_container:
         st.markdown(
             '<div style="font-size:1rem; font-weight:600;">Top Performing Stores</div>'
