@@ -30,17 +30,7 @@ st.set_page_config(page_title="WOSV Dashboard", layout="wide")
 require_login()
 
 with st.sidebar:
-    st.markdown(
-        """
-        <div style="padding: 0.25rem 0 1rem 0; line-height: 1.1;">
-            <div style="font-size: 1.5rem; font-weight: 700; letter-spacing: 0.02em;">WOSV</div>
-            <div style="font-size: 0.7rem; color: var(--text-secondary, #9CA3AF); letter-spacing: 0.08em; margin-top: 2px;">
-                WORLD OF SMOKE &amp; VAPE
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.image("assets/logo.png", use_container_width=True)
 
 # Keys here must match page_access.PAGE_REGISTRY - that's what the Manage
 # Users page's "Page access" editor grants/revokes per user. Icons use
