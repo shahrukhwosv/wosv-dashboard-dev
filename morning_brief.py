@@ -20,9 +20,16 @@ Each recipient gets their own copy so the greeting can use their name.
 Logos are attached inline (cid: images) rather than linked, so they show
 even when a mail app blocks remote images.
 
+SENDING: Railway blocks outgoing SMTP (email ports) on its Free/Hobby
+plans, so the email is handed to a small Google Apps Script web app over
+HTTPS, which sends it from your Google Workspace Gmail (MailApp). The Apps
+Script code is in send_mail_apps_script.js - see that file for setup.
+(If you ever move to Railway Pro, direct Gmail SMTP also works: set
+GMAIL_ADDRESS + GMAIL_APP_PASSWORD and leave MAIL_WEBHOOK_URL unset.)
+
 ENVIRONMENT VARIABLES (Railway):
-  GMAIL_ADDRESS        Google Workspace address the brief is sent from
-  GMAIL_APP_PASSWORD   16-character App Password for that account
+  MAIL_WEBHOOK_URL     the Apps Script web app URL (ends in /exec)
+  MAIL_WEBHOOK_SECRET  the same secret string set in the Apps Script
   BRIEF_RECIPIENTS     "First Name:email, First Name:email"
                        e.g. "Shahrukh:shahrukh@worldofsmokenvape.com"
   DASHBOARD_URL        optional - defaults to the dev dashboard URL
@@ -39,6 +46,7 @@ LOCAL PREVIEW (no email sent):
   python morning_brief.py --dry-run          writes morning_brief_preview.html
 """
 import argparse
+import base64
 import os
 import smtplib
 import sys
@@ -376,6 +384,38 @@ def parse_recipients(raw):
     return out
 
 
+def send_via_webhook(d, first_name, to_email):
+    """Hands the finished email to the Apps Script web app, which sends it
+    from Gmail. Logos go along base64-encoded and are attached inline there."""
+    import requests
+    images = {}
+    for cid, (filename, _, _) in LOGOS.items():
+        with open(os.path.join(ASSETS, filename), "rb") as f:
+            images[cid] = base64.b64encode(f.read()).decode()
+    resp = requests.post(
+        os.environ["MAIL_WEBHOOK_URL"],
+        json={
+            "secret": os.getenv("MAIL_WEBHOOK_SECRET", ""),
+            "to": to_email,
+            "subject": f"Morning Brief \u2014 {d['today']:%a, %b %-d}",
+            "html": build_html(d, first_name),
+            "text": build_text(d),
+            "name": "The Morning Brief",
+            "images": images,
+        },
+        timeout=60,
+    )
+    try:
+        result = resp.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Mail web app returned HTTP {resp.status_code} without JSON - check that it's deployed "
+            "with access set to 'Anyone' and that MAIL_WEBHOOK_URL is the /exec URL."
+        )
+    if not result.get("ok"):
+        raise RuntimeError(f"Mail web app refused to send: {result.get('error')}")
+
+
 def build_message(d, first_name, to_email, sender):
     msg = MIMEMultipart("related")
     msg["Subject"] = f"Morning Brief — {d['today']:%a, %b %-d}"
@@ -412,12 +452,20 @@ def main():
         print("Wrote morning_brief_preview.html")
         return
 
+    if not recipients:
+        raise RuntimeError("BRIEF_RECIPIENTS is empty - nobody to send to.")
+
+    if os.getenv("MAIL_WEBHOOK_URL"):
+        for first_name, email in recipients:
+            send_via_webhook(d, first_name, email)
+            print(f"Sent to {email}")
+        print(f"Morning brief sent to {len(recipients)} recipient(s).")
+        return
+
     sender = os.getenv("GMAIL_ADDRESS")
     password = (os.getenv("GMAIL_APP_PASSWORD") or "").replace(" ", "")
     if not (sender and password):
-        raise RuntimeError("GMAIL_ADDRESS and GMAIL_APP_PASSWORD must be set.")
-    if not recipients:
-        raise RuntimeError("BRIEF_RECIPIENTS is empty - nobody to send to.")
+        raise RuntimeError("Set MAIL_WEBHOOK_URL (Apps Script) - or GMAIL_ADDRESS + GMAIL_APP_PASSWORD on Railway Pro.")
 
     with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as smtp:
         smtp.starttls()
