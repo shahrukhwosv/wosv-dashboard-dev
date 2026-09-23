@@ -55,6 +55,7 @@ from lightspeed_client import load_config
 from sales_pace import update_daily_log, store_local_today
 from store_access import get_store_list, PACE_CALCULATOR_STORES_LIST
 from dashboard_data import save_mama_snapshot
+from topshelf_invoices import nightly_sync as refresh_topshelf_invoices
 
 
 # NOTE: this script runs outside Streamlit (no logged-in user, no
@@ -108,8 +109,23 @@ def refresh_mama_sold(config):
 
 def main():
     config = load_config()
-    refresh_pace_log(config)
-    refresh_mama_sold(config)
+    # Each step runs even if an earlier one fails, so e.g. an ERP outage
+    # doesn't also stop the pace log / Mama's Sold from refreshing. Any
+    # failure still makes the run exit non-zero (visible in Railway).
+    steps = [
+        ("pace log", lambda: refresh_pace_log(config)),
+        ("mama's sold", lambda: refresh_mama_sold(config)),
+        ("top shelf invoices", refresh_topshelf_invoices),
+    ]
+    failed = []
+    for name, step in steps:
+        try:
+            step()
+        except Exception as e:
+            print(f"[{name}] FAILED: {e}")
+            failed.append(name)
+    if failed:
+        raise RuntimeError(f"{len(failed)} step(s) failed: {', '.join(failed)}")
     print("Nightly refresh complete.")
 
 

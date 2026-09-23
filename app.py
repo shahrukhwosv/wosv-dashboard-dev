@@ -44,6 +44,7 @@ page_objects = {
     "category_sales": st.Page("category_sales_page.py", title="Category Sales", icon=":material/search:"),
     "monthly_reports": st.Page("monthly_reports_page.py", title="Monthly Reports", icon=":material/summarize:"),
     "purchase_order_status": st.Page("purchase_order_status_page.py", title="Purchase Order Status", icon=":material/assignment:"),
+    "topshelf_invoices": st.Page("topshelf_invoices_page.py", title="Top Shelf Invoices", icon=":material/request_quote:"),
 }
 
 if st.session_state.get("is_admin"):

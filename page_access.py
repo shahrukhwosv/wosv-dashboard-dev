@@ -25,6 +25,7 @@ PAGE_REGISTRY = [
     ("category_sales", "Category Sales"),
     ("monthly_reports", "Monthly Reports"),
     ("purchase_order_status", "Purchase Order Status"),
+    ("topshelf_invoices", "Top Shelf Invoices"),
 ]
 PAGE_LABELS = dict(PAGE_REGISTRY)
 ALL_PAGE_KEYS = [key for key, _ in PAGE_REGISTRY]
