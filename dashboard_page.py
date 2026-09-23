@@ -36,6 +36,14 @@ used yet:
     short early in the month - omitted entirely if fewer than 2 days of
     data exist yet, rather than drawing a single dot)
 
+TSN PROFIT (Top Shelf Novelties, wholesale) replaces MTD Pace in the 5th
+card for anyone who can see the Top Shelf Invoices page (admins always;
+everyone else keeps MTD Pace, so wholesale profit isn't shown to users who
+weren't granted it). It shows yesterday's total profit across TSN invoices,
+read from the "Top Shelf Invoices" sheet tab that nightly_refresh.py fills
+(see topshelf_invoices.py) - with a 7-day profit sparkline - and the same
+users get yesterday's TSN invoice table at the bottom of the page.
+
 MTD Pace reuses sales_pace.compute_pace() (same projection math as the
 Pace Calculator page) per store, summed into one company-wide projected
 total for the current month, compared against last month's actual total
@@ -70,6 +78,8 @@ from dashboard_data import load_mama_snapshot
 from sales_pace import compute_pace, month_actual_total, read_daily_log, store_local_today
 from store_regions import NORTH_STORES, SOUTH_STORES
 from store_access import PACE_CALCULATOR_STORES_LIST, get_page_store_keys
+from page_access import get_accessible_pages
+from topshelf_invoices import read_log as read_tsn_log
 
 CARD_STYLE = (
     "background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); "
@@ -168,6 +178,24 @@ def pct_delta_text(change):
     return f"{arrow} {sign}{change:.1f}%"
 
 
+def can_see_tsn():
+    """Same rule app.py uses for the sidebar: admins see everything; a user
+    with no saved page grants yet sees every page; otherwise only granted
+    pages."""
+    if st.session_state.get("is_admin"):
+        return True
+    try:
+        granted = get_accessible_pages(st.session_state.user_id)
+    except Exception:
+        return False
+    return (not granted) or ("topshelf_invoices" in granted)
+
+
+@st.cache_data(ttl=600)
+def load_tsn_log():
+    return read_tsn_log()
+
+
 config = ls.load_config()
 stores = config["stores"]
 
@@ -262,6 +290,21 @@ month_start = today.replace(day=1)
 mtd_window = accessible_log_df[(accessible_log_df["date"] >= month_start) & (accessible_log_df["date"] <= snapshot_date)]
 mtd_cumulative = mtd_window.groupby("date")["total"].sum().sort_index().cumsum().tolist()
 
+# --- Top Shelf Novelties (wholesale) - yesterday's invoices/profit ---
+show_tsn = can_see_tsn()
+tsn_day_df, tsn_error, tsn_spark = None, None, []
+if show_tsn:
+    try:
+        tsn_log = load_tsn_log()
+        tsn_day_df = tsn_log[tsn_log["Date"] == yesterday].sort_values("Invoice #")
+        profit_by_day = tsn_log.groupby("Date")["Profit"].sum()
+        tsn_spark = [
+            float(profit_by_day.get(yesterday - timedelta(days=i), 0.0))
+            for i in range(SPARK_DAYS - 1, -1, -1)
+        ]
+    except Exception as e:
+        tsn_error = str(e)
+
 # --- KPI cards ---
 cols = st.columns(5)
 
@@ -318,16 +361,27 @@ with cols[3]:
     )
 
 with cols[4]:
-    spark = sparkline_svg(mtd_cumulative, "#F59E0B")
-    st.markdown(
-        render_metric_card(
-            "MTD PACE", f"${mtd_projected_total:,.0f}",
-            pct_delta_text(mtd_change), "vs last month",
-            delta_positive=(mtd_change >= 0) if mtd_change is not None else None,
-            icon="\u2197", icon_color="#F59E0B", sparkline_html=spark,
-        ),
-        unsafe_allow_html=True,
-    )
+    if show_tsn:
+        tsn_value = "\u2014" if tsn_day_df is None else f"${float(tsn_day_df['Profit'].sum()):,.2f}"
+        st.markdown(
+            render_metric_card(
+                "TSN PROFIT", tsn_value, "YESTERDAY",
+                delta_positive=None, icon="T", icon_color="#14B8A6",
+                sparkline_html=sparkline_svg(tsn_spark, "#14B8A6"),
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        spark = sparkline_svg(mtd_cumulative, "#F59E0B")
+        st.markdown(
+            render_metric_card(
+                "MTD PACE", f"${mtd_projected_total:,.0f}",
+                pct_delta_text(mtd_change), "vs last month",
+                delta_positive=(mtd_change >= 0) if mtd_change is not None else None,
+                icon="\u2197", icon_color="#F59E0B", sparkline_html=spark,
+            ),
+            unsafe_allow_html=True,
+        )
 
 if mama_note:
     st.caption(mama_note)
@@ -468,3 +522,41 @@ with ranking_col:
                 f'{change_html}</div></div>'
             )
         st.markdown("".join(rows_html), unsafe_allow_html=True)
+
+
+# --- Top Shelf Novelties: yesterday's invoices ---
+if show_tsn:
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div style="font-size:1rem; font-weight:600;">Top Shelf Invoices</div>'
+            f'<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
+            f'Yesterday ({yesterday.strftime("%b %d")})</div>',
+            unsafe_allow_html=True,
+        )
+        if tsn_error:
+            st.warning(f"Couldn't load Top Shelf invoices: {tsn_error}")
+        elif tsn_day_df is None or tsn_day_df.empty:
+            st.write("No Top Shelf invoices yesterday.")
+        else:
+            sales = tsn_day_df["Product Sales"].sum()
+            profit = tsn_day_df["Profit"].sum()
+            show = tsn_day_df[["Invoice #", "Customer", "Amount", "Shipping", "Profit", "Margin %"]].copy()
+            show["Margin %"] = show["Margin %"].apply(lambda m: "\u2014" if pd.isna(m) else f"{m:.1f}%")
+            st.dataframe(
+                show,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Invoice #": st.column_config.NumberColumn(format="%d"),
+                    "Amount": st.column_config.NumberColumn(format="dollar"),
+                    "Shipping": st.column_config.NumberColumn(format="dollar"),
+                    "Profit": st.column_config.NumberColumn(format="dollar"),
+                    "Margin %": st.column_config.TextColumn(),
+                },
+            )
+            st.caption(
+                f"{len(tsn_day_df)} invoice(s) \u00b7 \\${tsn_day_df['Amount'].sum():,.2f} total \u00b7 "
+                f"\\${profit:,.2f} profit" + (f" \u00b7 {profit / sales * 100:.1f}% margin" if sales > 0 else "")
+                + " \u00b7 See the Top Shelf Invoices page for other dates."
+            )

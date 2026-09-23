@@ -15,6 +15,7 @@ Admins also get:
 """
 from datetime import timedelta
 
+import pandas as pd
 import streamlit as st
 
 import shipstation_client
@@ -77,15 +78,18 @@ else:
     cols = ["Invoice #", "Customer", "Amount", "Shipping", "Profit", "Margin %"]
     if start != end:
         cols = ["Date"] + cols
+    table = show[cols].copy()
+    table["Margin %"] = table["Margin %"].apply(lambda m: "\u2014" if pd.isna(m) else f"{m:.1f}%")
     st.dataframe(
-        show[cols],
+        table,
         hide_index=True,
         use_container_width=True,
         column_config={
-            "Amount": st.column_config.NumberColumn(format="$%.2f"),
-            "Shipping": st.column_config.NumberColumn(format="$%.2f", help="0 when the invoice charged shipping; otherwise the ShipStation label cost"),
-            "Profit": st.column_config.NumberColumn(format="$%.2f", help="Product sales - product cost - shipping"),
-            "Margin %": st.column_config.NumberColumn(format="%.1f%%", help="Profit / product sales (amount without tax or shipping charged)"),
+            "Invoice #": st.column_config.NumberColumn(format="%d"),
+            "Amount": st.column_config.NumberColumn(format="dollar"),
+            "Shipping": st.column_config.NumberColumn(format="dollar", help="0 when the invoice charged shipping; otherwise the ShipStation label cost"),
+            "Profit": st.column_config.NumberColumn(format="dollar", help="Product sales - product cost - shipping"),
+            "Margin %": st.column_config.TextColumn(help="Profit / product sales (amount without tax or shipping charged)"),
         },
     )
 
