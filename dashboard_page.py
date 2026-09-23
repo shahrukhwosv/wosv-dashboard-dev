@@ -39,10 +39,13 @@ used yet:
 TSN PROFIT (Top Shelf Novelties, wholesale) replaces MTD Pace in the 5th
 card for anyone who can see the Top Shelf Invoices page (admins always;
 everyone else keeps MTD Pace, so wholesale profit isn't shown to users who
-weren't granted it). It shows yesterday's total profit across TSN invoices,
-read from the "Top Shelf Invoices" sheet tab that nightly_refresh.py fills
-(see topshelf_invoices.py) - with a 7-day profit sparkline - and the same
-users get yesterday's TSN invoice table at the bottom of the page.
+weren't granted it). It shows month-to-date profit across TSN invoices
+(the month of "yesterday", through yesterday - so on the 1st it shows the
+full previous month rather than $0), with a cumulative MTD sparkline, read
+from the "Top Shelf Invoices" sheet tab that nightly_refresh.py fills (see
+topshelf_invoices.py). For those same users, yesterday's TSN invoice table
+takes the Monthly Sales Trend chart's place next to Top Performing Stores;
+everyone else still gets the chart.
 
 MTD Pace reuses sales_pace.compute_pace() (same projection math as the
 Pace Calculator page) per store, summed into one company-wide projected
@@ -292,16 +295,19 @@ mtd_cumulative = mtd_window.groupby("date")["total"].sum().sort_index().cumsum()
 
 # --- Top Shelf Novelties (wholesale) - yesterday's invoices/profit ---
 show_tsn = can_see_tsn()
-tsn_day_df, tsn_error, tsn_spark = None, None, []
+tsn_day_df, tsn_error, tsn_mtd_profit, tsn_spark = None, None, None, []
+tsn_month_start = yesterday.replace(day=1)
 if show_tsn:
     try:
         tsn_log = load_tsn_log()
         tsn_day_df = tsn_log[tsn_log["Date"] == yesterday].sort_values("Invoice #")
-        profit_by_day = tsn_log.groupby("Date")["Profit"].sum()
-        tsn_spark = [
-            float(profit_by_day.get(yesterday - timedelta(days=i), 0.0))
-            for i in range(SPARK_DAYS - 1, -1, -1)
-        ]
+        mtd = tsn_log[(tsn_log["Date"] >= tsn_month_start) & (tsn_log["Date"] <= yesterday)]
+        tsn_mtd_profit = float(mtd["Profit"].sum())
+        profit_by_day = mtd.groupby("Date")["Profit"].sum()
+        running, tsn_spark = 0.0, []
+        for i in range((yesterday - tsn_month_start).days + 1):
+            running += float(profit_by_day.get(tsn_month_start + timedelta(days=i), 0.0))
+            tsn_spark.append(running)
     except Exception as e:
         tsn_error = str(e)
 
@@ -362,10 +368,14 @@ with cols[3]:
 
 with cols[4]:
     if show_tsn:
-        tsn_value = "\u2014" if tsn_day_df is None else f"${float(tsn_day_df['Profit'].sum()):,.2f}"
+        tsn_value = "\u2014" if tsn_mtd_profit is None else f"${tsn_mtd_profit:,.2f}"
+        tsn_range = (
+            tsn_month_start.strftime("%b %-d") if tsn_month_start == yesterday
+            else f"{tsn_month_start.strftime('%b %-d')}\u2013{yesterday.day}"
+        )
         st.markdown(
             render_metric_card(
-                "TSN PROFIT", tsn_value, "YESTERDAY",
+                "TSN PROFIT", tsn_value, "MONTH TO DATE", tsn_range,
                 delta_positive=None, icon="T", icon_color="#14B8A6",
                 sparkline_html=sparkline_svg(tsn_spark, "#14B8A6"),
             ),
@@ -409,84 +419,139 @@ for _ in range(MONTHS_BACK):
 
 trend_df = accessible_log_df[accessible_log_df["date"] >= earliest_start].copy()
 
+
+
+def render_tsn_invoices():
+    """Yesterday's Top Shelf invoices - sits in the Monthly Sales Trend
+    chart's slot for users who can see Top Shelf data."""
+    st.markdown(
+        '<div style="font-size:1rem; font-weight:600;">Top Shelf Invoices</div>'
+        f'<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
+        f'Yesterday ({yesterday.strftime("%b %d")})</div>',
+        unsafe_allow_html=True,
+    )
+    if tsn_error:
+        st.warning(f"Couldn't load Top Shelf invoices: {tsn_error}")
+        return
+    if tsn_day_df is None or tsn_day_df.empty:
+        st.write("No Top Shelf invoices yesterday.")
+        return
+    sales = tsn_day_df["Product Sales"].sum()
+    profit = tsn_day_df["Profit"].sum()
+    show = tsn_day_df[["Invoice #", "Customer", "Amount", "Shipping", "Profit", "Margin %"]].copy()
+    show["Invoice #"] = show["Invoice #"].astype(int).astype(str)
+    show["Margin %"] = show["Margin %"].apply(lambda m: "\u2014" if pd.isna(m) else f"{m:.1f}%")
+    # Totals row - margin is total profit / total product sales (amount
+    # without tax or shipping charged), not an average of the row margins.
+    show.loc[len(show)] = {
+        "Invoice #": "",
+        "Customer": "TOTAL",
+        "Amount": tsn_day_df["Amount"].sum(),
+        "Shipping": tsn_day_df["Shipping"].sum(),
+        "Profit": profit,
+        "Margin %": f"{profit / sales * 100:.1f}%" if sales > 0 else "\u2014",
+    }
+    last = len(show) - 1
+    styled = show.style.apply(
+        lambda row: ["font-weight: 700" if row.name == last else "" for _ in row], axis=1
+    )
+    st.dataframe(
+        styled,
+        hide_index=True,
+        use_container_width=True,
+        height=min(35 * (len(show) + 1) + 3, 336),
+        column_config={
+            "Invoice #": st.column_config.TextColumn(),
+            "Amount": st.column_config.NumberColumn(format="dollar"),
+            "Shipping": st.column_config.NumberColumn(format="dollar"),
+            "Profit": st.column_config.NumberColumn(format="dollar"),
+            "Margin %": st.column_config.TextColumn(),
+        },
+    )
+    st.caption(f"{len(tsn_day_df)} invoice{'s' if len(tsn_day_df) != 1 else ''}")
+
 chart_col, ranking_col = st.columns([2, 1])
 
 with chart_col:
     chart_container = st.container(border=True, height=440)
-    with chart_container:
-        title_col, metric_col, popover_col = st.columns([2.4, 1, 0.9])
-        with title_col:
-            st.markdown(
-                '<div style="font-size:1rem; font-weight:600;">Monthly Sales Trend</div>'
-                '<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
-                'Compare sales across all stores</div>',
-                unsafe_allow_html=True,
-            )
-        with metric_col:
-            # Only Total Sales exists in the pace log (no unit/transaction
-            # counts tracked there) - shown as a static label rather than
-            # fake Units Sold/Transactions tabs that would do nothing.
-            st.markdown(
-                '<div style="text-align:right;"><span style="background:#6366F133; color:#A5B4FC; '
-                'font-size:0.78rem; padding:5px 12px; border-radius:8px;">Total Sales</span></div>',
-                unsafe_allow_html=True,
-            )
-        with popover_col:
-            st.markdown('<div style="height: 4px;"></div>', unsafe_allow_html=True)
-
-        if trend_df.empty:
-            st.write("No historical data in the pace log sheet yet for this range.")
-        else:
+    if show_tsn:
+        with chart_container:
+            render_tsn_invoices()
+    else:
+        with chart_container:
+            title_col, metric_col, popover_col = st.columns([2.4, 1, 0.9])
+            with title_col:
+                st.markdown(
+                    '<div style="font-size:1rem; font-weight:600;">Monthly Sales Trend</div>'
+                    '<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
+                    'Compare sales across all stores</div>',
+                    unsafe_allow_html=True,
+                )
+            with metric_col:
+                # Only Total Sales exists in the pace log (no unit/transaction
+                # counts tracked there) - shown as a static label rather than
+                # fake Units Sold/Transactions tabs that would do nothing.
+                st.markdown(
+                    '<div style="text-align:right;"><span style="background:#6366F133; color:#A5B4FC; '
+                    'font-size:0.78rem; padding:5px 12px; border-radius:8px;">Total Sales</span></div>',
+                    unsafe_allow_html=True,
+                )
             with popover_col:
-                with st.popover("Stores", use_container_width=True):
-                    preset_col1, preset_col2 = st.columns(2)
-                    if preset_col1.button("North Stores", use_container_width=True):
-                        st.session_state["dashboard_trend_stores"] = sorted(
-                            NORTH_STORES & set(store_names.values())
-                        )
-                        st.rerun()
-                    if preset_col2.button("South Stores", use_container_width=True):
-                        st.session_state["dashboard_trend_stores"] = sorted(
-                            SOUTH_STORES & set(store_names.values())
-                        )
-                        st.rerun()
-                    selected_names = st.multiselect(
-                        "Stores to show",
-                        options=sorted(store_names.values()),
-                        default=sorted(store_names.values()),
-                        label_visibility="collapsed",
-                        key="dashboard_trend_stores",
-                    )
-
-            trend_df["month"] = trend_df["date"].apply(lambda d: d.strftime("%b %Y"))
-            trend_df["store_name"] = trend_df["store"].map(store_names)
-            trend_df = trend_df[trend_df["store_name"].isin(selected_names)]
+                st.markdown('<div style="height: 4px;"></div>', unsafe_allow_html=True)
 
             if trend_df.empty:
-                st.write("No stores selected.")
+                st.write("No historical data in the pace log sheet yet for this range.")
             else:
-                monthly = trend_df.groupby(["month", "store_name"], as_index=False)["total"].sum()
-                monthly["month"] = pd.Categorical(monthly["month"], categories=month_order, ordered=True)
-                monthly = monthly.sort_values("month")
+                with popover_col:
+                    with st.popover("Stores", use_container_width=True):
+                        preset_col1, preset_col2 = st.columns(2)
+                        if preset_col1.button("North Stores", use_container_width=True):
+                            st.session_state["dashboard_trend_stores"] = sorted(
+                                NORTH_STORES & set(store_names.values())
+                            )
+                            st.rerun()
+                        if preset_col2.button("South Stores", use_container_width=True):
+                            st.session_state["dashboard_trend_stores"] = sorted(
+                                SOUTH_STORES & set(store_names.values())
+                            )
+                            st.rerun()
+                        selected_names = st.multiselect(
+                            "Stores to show",
+                            options=sorted(store_names.values()),
+                            default=sorted(store_names.values()),
+                            label_visibility="collapsed",
+                            key="dashboard_trend_stores",
+                        )
 
-                chart = (
-                    alt.Chart(monthly)
-                    .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=40))
-                    .encode(
-                        x=alt.X("month:N", sort=month_order, title=None,
-                                axis=alt.Axis(labelAngle=0, grid=False)),
-                        y=alt.Y("total:Q", title=None,
-                                axis=alt.Axis(gridColor="rgba(255,255,255,0.08)", format="$,.0f")),
-                        color=alt.Color("store_name:N", title=None,
-                                         scale=alt.Scale(scheme="tableau10"),
-                                         legend=alt.Legend(orient="bottom", columns=4, symbolType="stroke")),
-                        tooltip=["store_name", "month", alt.Tooltip("total:Q", format="$,.2f")],
+                trend_df["month"] = trend_df["date"].apply(lambda d: d.strftime("%b %Y"))
+                trend_df["store_name"] = trend_df["store"].map(store_names)
+                trend_df = trend_df[trend_df["store_name"].isin(selected_names)]
+
+                if trend_df.empty:
+                    st.write("No stores selected.")
+                else:
+                    monthly = trend_df.groupby(["month", "store_name"], as_index=False)["total"].sum()
+                    monthly["month"] = pd.Categorical(monthly["month"], categories=month_order, ordered=True)
+                    monthly = monthly.sort_values("month")
+
+                    chart = (
+                        alt.Chart(monthly)
+                        .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=40))
+                        .encode(
+                            x=alt.X("month:N", sort=month_order, title=None,
+                                    axis=alt.Axis(labelAngle=0, grid=False)),
+                            y=alt.Y("total:Q", title=None,
+                                    axis=alt.Axis(gridColor="rgba(255,255,255,0.08)", format="$,.0f")),
+                            color=alt.Color("store_name:N", title=None,
+                                             scale=alt.Scale(scheme="tableau10"),
+                                             legend=alt.Legend(orient="bottom", columns=4, symbolType="stroke")),
+                            tooltip=["store_name", "month", alt.Tooltip("total:Q", format="$,.2f")],
+                        )
+                        .properties(height=220)
+                        .configure_view(strokeWidth=0)
+                        .configure_axis(labelColor="#9CA3AF", titleColor="#9CA3AF")
                     )
-                    .properties(height=220)
-                    .configure_view(strokeWidth=0)
-                    .configure_axis(labelColor="#9CA3AF", titleColor="#9CA3AF")
-                )
-                st.altair_chart(chart, use_container_width=True)
+                    st.altair_chart(chart, use_container_width=True)
 
 with ranking_col:
     ranking_container = st.container(border=True, height=440)
@@ -523,40 +588,3 @@ with ranking_col:
             )
         st.markdown("".join(rows_html), unsafe_allow_html=True)
 
-
-# --- Top Shelf Novelties: yesterday's invoices ---
-if show_tsn:
-    st.write("")
-    with st.container(border=True):
-        st.markdown(
-            '<div style="font-size:1rem; font-weight:600;">Top Shelf Invoices</div>'
-            f'<div style="font-size:0.8rem; color:#9CA3AF; margin-bottom:0.75rem;">'
-            f'Yesterday ({yesterday.strftime("%b %d")})</div>',
-            unsafe_allow_html=True,
-        )
-        if tsn_error:
-            st.warning(f"Couldn't load Top Shelf invoices: {tsn_error}")
-        elif tsn_day_df is None or tsn_day_df.empty:
-            st.write("No Top Shelf invoices yesterday.")
-        else:
-            sales = tsn_day_df["Product Sales"].sum()
-            profit = tsn_day_df["Profit"].sum()
-            show = tsn_day_df[["Invoice #", "Customer", "Amount", "Shipping", "Profit", "Margin %"]].copy()
-            show["Margin %"] = show["Margin %"].apply(lambda m: "\u2014" if pd.isna(m) else f"{m:.1f}%")
-            st.dataframe(
-                show,
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Invoice #": st.column_config.NumberColumn(format="%d"),
-                    "Amount": st.column_config.NumberColumn(format="dollar"),
-                    "Shipping": st.column_config.NumberColumn(format="dollar"),
-                    "Profit": st.column_config.NumberColumn(format="dollar"),
-                    "Margin %": st.column_config.TextColumn(),
-                },
-            )
-            st.caption(
-                f"{len(tsn_day_df)} invoice(s) \u00b7 \\${tsn_day_df['Amount'].sum():,.2f} total \u00b7 "
-                f"\\${profit:,.2f} profit" + (f" \u00b7 {profit / sales * 100:.1f}% margin" if sales > 0 else "")
-                + " \u00b7 See the Top Shelf Invoices page for other dates."
-            )
