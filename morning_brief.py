@@ -18,7 +18,10 @@ makes no Lightspeed/ERP calls of its own):
 
 Each recipient gets their own copy so the greeting can use their name.
 Logos are attached inline (cid: images) rather than linked, so they show
-even when a mail app blocks remote images.
+even when a mail app blocks remote images. Each logo image includes its
+own rounded white container - drawn into the PNG rather than with CSS -
+because the Gmail app darkens every background color in dark mode but
+never alters images, so the white container stays white.
 
 SENDING: Railway blocks outgoing SMTP (email ports) on its Free/Hobby
 plans, so the email is handed to a small Google Apps Script web app over
@@ -70,9 +73,9 @@ DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://wosv-dashboard-dev-productio
 ERP_URL = "https://erp.topshelfnovelties.com"
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "email")
 LOGOS = {  # cid -> (file, display width, display height)
-    "wosv_logo": ("wosv_logo.png", 280, 54),
-    "tsn_logo": ("tsn_logo.png", 92, 52),
-    "mamas_logo": ("mamas_logo.png", 160, 46),
+    "wosv_logo": ("wosv_logo.png", 460, 100),
+    "tsn_logo": ("tsn_logo.png", 460, 100),
+    "mamas_logo": ("mamas_logo.png", 460, 100),
 }
 
 # Brand colors
