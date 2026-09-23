@@ -53,24 +53,29 @@ from datetime import timedelta
 import lightspeed_client as ls
 from lightspeed_client import load_config
 from sales_pace import update_daily_log, store_local_today
-from store_access import get_page_store_keys, PACE_CALCULATOR_STORES_LIST
+from store_access import get_store_list, PACE_CALCULATOR_STORES_LIST
 from dashboard_data import save_mama_snapshot
 
 
+# NOTE: this script runs outside Streamlit (no logged-in user, no
+# st.session_state), so it can't use store_access.get_page_store_keys() -
+# that function looks up the current user's permissions and would crash
+# here. Instead it behaves like an admin: every store in config, narrowed
+# by the same admin-saved store lists the pages use.
+
+
 def refresh_pace_log(config):
-    store_keys = list(get_page_store_keys(
-        config,
-        list_name=PACE_CALCULATOR_STORES_LIST,
-        default_keys=list(config["stores"].keys()),
-        require_connected=False,
-    ))
+    all_keys = list(config["stores"].keys())
+    restricted = get_store_list(PACE_CALCULATOR_STORES_LIST, default_keys=all_keys)
+    store_keys = [k for k in all_keys if k in restricted]
     print(f"[pace log] Refreshing {len(store_keys)} store(s)...")
     added = update_daily_log(config, store_keys)
     print(f"[pace log] Done - added {added} new day(s) of data.")
 
 
 def refresh_mama_sold(config):
-    store_keys = sorted(get_page_store_keys(config))  # unrestricted, same as Category Sales
+    # Every connected store (has a refresh_token), same as an admin on Category Sales
+    store_keys = sorted(k for k, v in config["stores"].items() if v.get("refresh_token"))
     snapshot_date = store_local_today() - timedelta(days=1)
     print(f"[mama's sold] Fetching {snapshot_date.isoformat()} across {len(store_keys)} store(s)...")
 
