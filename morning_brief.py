@@ -13,8 +13,11 @@ makes no Lightspeed/ERP calls of its own):
   02 Wholesale (Top Shelf Novelties): month-to-date revenue, profit,
      margin and invoice count, plus yesterday's invoices with a totals row.
      -> "Top Shelf Invoices" sheet tab (topshelf_invoices.read_log)
-  03 Manufacturing (Mama's): yesterday's units and sales across stores.
+  03 Manufacturing (Mama's): yesterday's units and sales across stores,
+     yesterday's RepRally cases, and RepRally cases month to date by flavor.
      -> dashboard database (dashboard_data.load_mama_snapshot)
+     -> RepRally brand portal, live at send time (reprally_client.py;
+        needs REPRALLY_USERNAME / REPRALLY_PASSWORD on this service)
 
 Each recipient gets their own copy so the greeting can use their name.
 Logos are attached inline (cid: images) rather than linked, so they show
@@ -36,6 +39,8 @@ ENVIRONMENT VARIABLES (Railway):
   BRIEF_RECIPIENTS     "First Name:email, First Name:email"
                        e.g. "Shahrukh:shahrukh@worldofsmokenvape.com"
   DASHBOARD_URL        optional - defaults to the dev dashboard URL
+  REPRALLY_USERNAME    RepRally brand portal login (Mama's section)
+  REPRALLY_PASSWORD
   plus the same DATABASE_URL, GOOGLE_SERVICE_ACCOUNT_JSON,
   PACE_LOG_SHEET_ID, STORES_CONFIG_JSON the other services use.
 
@@ -62,6 +67,7 @@ from html import escape
 
 import pandas as pd
 
+import reprally_client
 from dashboard_data import load_mama_snapshot
 from lightspeed_client import load_config
 from sales_pace import compute_pace, read_daily_log, store_local_today
@@ -81,7 +87,7 @@ LOGOS = {  # cid -> (file, display width, display height)
 # Brand colors
 WOSV = {"accent": "#1ab0e6", "text": "#0e8fc0", "border": "#b3e3f6", "tile": "#e8f7fd", "btn_bg": "#cdeefa", "btn_fg": "#0b6f96"}
 TSN = {"accent": "#f8636b", "navy": "#154859", "border": "#c5d5dc", "tile": "#eef3f5"}
-MAMAS = {"red": "#e0283a", "yellow": "#f9c455", "border": "#f3c3c7", "tile": "#fff4d6"}
+MAMAS = {"red": "#e0283a", "border": "#f3c3c7", "tile": "#f4f2ee"}
 
 SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
 SERIF = "Georgia, 'Times New Roman', serif"
@@ -168,6 +174,22 @@ def gather():
         "sales": m_total or 0.0,
         "store_count": sum(1 for v in stores.values() if v.get("refresh_token")) - len(m_failed or []),
     }
+
+    # --- RepRally (Mama's wholesale) ---
+    reprally = None
+    if reprally_client.is_configured():
+        try:
+            rr = reprally_client.RepRallyClient()
+            mtd_cases = rr.cases_by_flavor(month_start, yesterday)
+            reprally = {
+                "yesterday_cases": sum(rr.cases_by_flavor(yesterday, yesterday).values()),
+                "mtd": list(mtd_cases.items()),
+                "mtd_total": sum(mtd_cases.values()),
+            }
+        except Exception as e:
+            print(f"[reprally] failed: {e}")
+            notes.append("RepRally numbers couldn't be loaded.")
+    mamas["reprally"] = reprally
 
     return {"today": today, "yesterday": yesterday, "retail": retail, "tsn": tsn, "mamas": mamas, "notes": notes}
 
@@ -314,14 +336,37 @@ def build_html(d, first_name):
     </table>
   </td></tr>'''
 
+    rr = m.get("reprally")
+    cases = lambda n: f"{n:,} case" + ("" if n == 1 else "s")
+    if rr:
+        flav = rr["mtd"]
+        flav_rows = "".join(
+            "<tr>" + _td(escape(f), last=i == len(flav) - 1) + _td(cases(c), True, last=i == len(flav) - 1) + "</tr>"
+            for i, (f, c) in enumerate(flav)
+        ) + "<tr>" + _td("Total", bold=True) + _td(cases(rr["mtd_total"]), True, bold=True) + "</tr>"
+        reprally_table = f'''
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:13px;">
+          <tr style="font-size:10px; letter-spacing:1px; color:#6b7280;"><td {TH}>FLAVOR</td><td {THR}>CASES</td></tr>
+          {flav_rows}
+        </table>'''
+        rr_tile = cases(rr["yesterday_cases"])
+    else:
+        reprally_table = '<div style="font-size:13px; color:#6b7280; padding:8px 0;">RepRally numbers unavailable.</div>'
+        rr_tile = "&mdash;"
+
     manufacturing = f'''
   <tr><td style="padding:22px 24px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid {MAMAS["border"]}; border-radius:12px;">
-      {_card_header("03", "MANUFACTURING", MAMAS["red"], MAMAS["red"], "mamas_logo", f'Sold yesterday, across all {m["store_count"]} stores')}
-      <tr><td style="padding:14px 22px 22px;">{_tiles([
+      {_card_header("03", "MANUFACTURING", MAMAS["red"], MAMAS["red"], "mamas_logo", "Yesterday")}
+      <tr><td style="padding:14px 22px 0;">{_tiles([
           ("UNITS", f'{m["units"]:,.0f}', "", None),
-          ("SALES", money2(m["sales"]), "", None),
-      ], MAMAS["tile"], f' border-top:3px solid {MAMAS["yellow"]};')}</td></tr>
+          ("SALES", money0(m["sales"]), "", None),
+          ("REPRALLY", rr_tile, "", None),
+      ], MAMAS["tile"])}</td></tr>
+      <tr><td style="padding:20px 22px 22px;">
+        <div style="font-size:11px; letter-spacing:1.5px; color:#6b7280; font-weight:700; margin-bottom:4px;">REPRALLY ORDERS &bull; MONTH TO DATE</div>
+        {reprally_table}
+      </td></tr>
     </table>
   </td></tr>'''
 
@@ -368,6 +413,10 @@ def build_text(d):
     lines += ["", f"WHOLESALE MTD: revenue {money0(t['revenue'])} | profit {money0(t['profit'])} | {t['count']} invoices"]
     lines += [f"  #{int(x['Invoice #'])} {x['Customer']}: {money2(x['Amount'])}, profit {money2(x['Profit'])}" for x in t["rows"]]
     lines += ["", f"MAMA'S SOLD yesterday: {m['units']:,.0f} units, {money2(m['sales'])}"]
+    rr = m.get("reprally")
+    if rr:
+        lines += [f"REPRALLY yesterday: {rr['yesterday_cases']:,} cases | month to date: {rr['mtd_total']:,} cases"]
+        lines += [f"  {f}: {c:,} cases" for f, c in rr["mtd"]]
     return "\n".join(lines)
 
 
