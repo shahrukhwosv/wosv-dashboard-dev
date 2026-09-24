@@ -28,7 +28,29 @@ from page_access import get_accessible_pages, ALL_PAGE_KEYS
 
 st.set_page_config(page_title="WOSV Dashboard", layout="wide")
 
+# Etsy sends the browser back with ?code=...&state=... after "Grant
+# access". That's a full page load, so it's handled BEFORE the login check:
+# the login form would otherwise swallow these one-time values. It's safe
+# without a login because `state` must match a random value that an admin
+# created moments earlier by clicking "Connect Etsy" (etsy_client.py).
+if "state" in st.query_params and ("code" in st.query_params or "error" in st.query_params):
+    import etsy_client
+    qp = dict(st.query_params)
+    st.query_params.clear()
+    if qp.get("error"):
+        st.session_state.etsy_connect_result = ("error", f"Etsy didn't connect: {qp.get('error_description') or qp['error']}")
+    else:
+        try:
+            shop = etsy_client.finish_login(qp["code"], qp["state"])
+            st.session_state.etsy_connect_result = ("success", f"Etsy connected: {shop}")
+        except Exception as e:
+            st.session_state.etsy_connect_result = ("error", f"Couldn't finish connecting Etsy: {e}")
+
 require_login()
+
+if "etsy_connect_result" in st.session_state:
+    kind, msg = st.session_state.pop("etsy_connect_result")
+    (st.success if kind == "success" else st.error)(msg)
 
 st.logo("assets/logo.png", size="large")
 

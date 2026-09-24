@@ -23,22 +23,8 @@ from sales_pace import store_local_today
 
 st.title("Etsy Orders")
 
-# ---------------------------------------------------------------------------
-# Etsy sends the admin back here with ?code=...&state=... after approval.
-# ---------------------------------------------------------------------------
-
-qp = st.query_params
-if "code" in qp and "state" in qp:
-    if st.session_state.get("is_admin"):
-        try:
-            shop = etsy_client.finish_login(qp["code"], qp["state"])
-            st.success(f"Etsy connected: {shop}")
-        except Exception as e:
-            st.error(f"Couldn't finish connecting Etsy: {e}")
-    st.query_params.clear()
-elif "error" in qp:
-    st.error(f"Etsy didn't connect: {qp.get('error_description') or qp['error']}")
-    st.query_params.clear()
+# (Etsy's redirect back after "Grant access" is handled in app.py, before
+# the login check - see the comment there.)
 
 yesterday = store_local_today() - timedelta(days=1)
 
