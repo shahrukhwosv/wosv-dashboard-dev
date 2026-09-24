@@ -37,7 +37,14 @@ REFRESH SCHEDULE (nightly_refresh.py):
   Etsy posts some fees days after the sale (e.g. the shipping transaction
   fee when the order ships) and labels are often printed the next day, so
   each night re-pulls the last RESYNC_DAYS days. Gaps are filled from the
-  last logged day, and the first run backfills from BACKFILL_START.
+  last logged day. Older days are never touched again, so every order from
+  HISTORY_START on stays in the log for good.
+
+  HISTORY: the log keeps every order from HISTORY_START (Jan 1, 2026) on.
+  The nightly job backfills any of that history not pulled yet, in
+  month-sized chunks (each chunk is saved as soon as it's done, so an
+  interrupted run picks up where it left off). Once it's complete, that's
+  recorded in the database (table etsy_sync_state) so it isn't re-checked.
 """
 import os
 import re
@@ -53,7 +60,8 @@ from topshelf_erp import ERP_TIMEZONE, ErpClient
 WORKSHEET_NAME = "Etsy Orders"
 OTHER_FEES_WORKSHEET = "Etsy Other Fees"
 RESYNC_DAYS = 7
-BACKFILL_START = os.getenv("ETSY_BACKFILL_START")  # e.g. "2026-09-01"; default: first of this month
+HISTORY_START = date.fromisoformat(os.getenv("ETSY_HISTORY_START", "2026-01-01"))
+CHUNK_DAYS = 31  # days pulled + written per batch
 TZ = ERP_TIMEZONE  # America/Chicago
 
 HEADER = [
@@ -387,18 +395,65 @@ def _write(name, header, rows_by_day):
 # ---------------------------------------------------------------------------
 
 def sync_days(days, progress=print):
+    """Pulls the given days and writes them, CHUNK_DAYS at a time - each
+    chunk is saved before the next starts, so a long backfill that gets
+    interrupted keeps what it already finished."""
     days = sorted(days)
-    orders, other = build_days(days, progress)
-    _write(WORKSHEET_NAME, HEADER, orders)
-    _write(OTHER_FEES_WORKSHEET, OTHER_FEES_HEADER, other)
-    for d in days:
-        progress(f"[etsy] {d.isoformat()}: {len(orders[d])} order(s), {len(other[d])} other fee(s)")
-    return sum(len(r) for r in orders.values())
+    total = 0
+    for i in range(0, len(days), CHUNK_DAYS):
+        chunk = days[i:i + CHUNK_DAYS]
+        orders, other = build_days(chunk, progress)
+        _write(WORKSHEET_NAME, HEADER, orders)
+        _write(OTHER_FEES_WORKSHEET, OTHER_FEES_HEADER, other)
+        n = sum(len(r) for r in orders.values())
+        total += n
+        progress(f"[etsy] {chunk[0].isoformat()} to {chunk[-1].isoformat()}: {n} order(s) saved")
+    return total
+
+
+# ---------------------------------------------------------------------------
+# History backfill bookkeeping (Postgres)
+# ---------------------------------------------------------------------------
+
+def _history_done_from():
+    """The earliest day the history backfill has completed from, or None."""
+    from lightspeed_client import _get_db_connection
+    conn = _get_db_connection()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CREATE TABLE IF NOT EXISTS etsy_sync_state (id INTEGER PRIMARY KEY, history_from DATE)")
+            cur.execute("SELECT history_from FROM etsy_sync_state WHERE id = 1")
+            row = cur.fetchone()
+        conn.commit()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _mark_history_done(start):
+    from lightspeed_client import _get_db_connection
+    conn = _get_db_connection()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CREATE TABLE IF NOT EXISTS etsy_sync_state (id INTEGER PRIMARY KEY, history_from DATE)")
+            cur.execute(
+                "INSERT INTO etsy_sync_state (id, history_from) VALUES (1, %s) "
+                "ON CONFLICT (id) DO UPDATE SET history_from = EXCLUDED.history_from",
+                (start,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def nightly_sync(progress=print):
-    """What nightly_refresh.py runs: fill any gap since the last logged
-    day and re-pull the last RESYNC_DAYS days."""
+    """What nightly_refresh.py runs: backfill any history since
+    HISTORY_START not pulled yet, fill any gap since the last logged day,
+    and re-pull the last RESYNC_DAYS days."""
     import etsy_client
     if not etsy_client.is_configured():
         progress("[etsy] Skipped - ETSY_API_KEY / ETSY_SHARED_SECRET / ETSY_REDIRECT_URI not set.")
@@ -407,14 +462,33 @@ def nightly_sync(progress=print):
     today = store_local_today()
     yesterday = today - timedelta(days=1)
     log = read_log()
-    if log.empty:
-        start = date.fromisoformat(BACKFILL_START) if BACKFILL_START else today.replace(day=1)
-    else:
-        start = min(log["Date"].max() + timedelta(days=1), yesterday - timedelta(days=RESYNC_DAYS - 1))
-    days = [start + timedelta(days=i) for i in range((yesterday - start).days + 1)]
-    if not days:
-        return 0
-    progress(f"[etsy] Syncing {len(days)} day(s): {days[0].isoformat()} to {days[-1].isoformat()}")
-    count = sync_days(days, progress)
+    count = 0
+
+    # 1. History: everything from HISTORY_START up to the first day already
+    #    in the log (or up to the recent window, if the log is empty).
+    done_from = _history_done_from()
+    if done_from is None or done_from > HISTORY_START:
+        history_end = (log["Date"].min() - timedelta(days=1)) if not log.empty else yesterday - timedelta(days=RESYNC_DAYS)
+        history = [HISTORY_START + timedelta(days=i) for i in range((history_end - HISTORY_START).days + 1)]
+        if history:
+            progress(f"[etsy] Backfilling history: {history[0].isoformat()} to {history[-1].isoformat()}")
+            # Newest month first, so if a run dies partway the log still
+            # runs unbroken back to wherever it got to, and the next run
+            # continues from there (not from the gap's far end).
+            for i in range(len(history), 0, -CHUNK_DAYS):
+                count += sync_days(history[max(0, i - CHUNK_DAYS):i], progress)
+        _mark_history_done(HISTORY_START)
+        log = read_log()
+
+    # 2. Recent days: fill any gap since the last logged day, and re-pull
+    #    the last RESYNC_DAYS days (late fees, labels printed later).
+    recent_start = yesterday - timedelta(days=RESYNC_DAYS - 1)
+    if not log.empty:
+        recent_start = min(log["Date"].max() + timedelta(days=1), recent_start)
+    recent_start = max(recent_start, HISTORY_START)
+    days = [recent_start + timedelta(days=i) for i in range((yesterday - recent_start).days + 1)]
+    if days:
+        progress(f"[etsy] Syncing {len(days)} day(s): {days[0].isoformat()} to {days[-1].isoformat()}")
+        count += sync_days(days, progress)
     progress(f"[etsy] Done - {count} order row(s) written.")
     return count

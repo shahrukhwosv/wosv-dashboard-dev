@@ -19,7 +19,7 @@ import streamlit as st
 
 import etsy_client
 import shipstation_client
-from etsy_orders import COST_OK, read_log, read_other_fees, sync_days
+from etsy_orders import COST_OK, HISTORY_START, read_log, read_other_fees, sync_days
 from sales_pace import store_local_today
 
 st.title("Etsy Orders")
@@ -51,25 +51,44 @@ def _load():
 # Date selection
 # ---------------------------------------------------------------------------
 
-c1, c2 = st.columns([2, 1])
+first_of_month = yesterday.replace(day=1)
+last_month_end = first_of_month - timedelta(days=1)
+PRESETS = {
+    "This year": (max(yesterday.replace(month=1, day=1), HISTORY_START), yesterday),
+    "This month": (first_of_month, yesterday),
+    "Last month": (last_month_end.replace(day=1), last_month_end),
+    "Yesterday": (yesterday, yesterday),
+    "All orders": (HISTORY_START, yesterday),
+    "Custom": None,
+}
+
+c1, c2, c3 = st.columns([1, 2, 1])
 with c1:
-    picked = st.date_input(
-        "Date or date range",
-        value=(yesterday, yesterday),
-        max_value=yesterday,
-        help="Pick one day, or click a start and end date for a range.",
-    )
+    preset = st.selectbox("Show", list(PRESETS), index=0)
 with c2:
+    if PRESETS[preset] is None:
+        picked = st.date_input(
+            "Date or date range",
+            value=(yesterday, yesterday),
+            min_value=HISTORY_START,
+            max_value=yesterday,
+            help="Pick one day, or click a start and end date for a range.",
+        )
+        if isinstance(picked, (tuple, list)):
+            start = picked[0]
+            end = picked[1] if len(picked) > 1 else picked[0]
+        else:
+            start = end = picked
+    else:
+        start, end = PRESETS[preset]
+        st.write("")
+        st.write("")
+        st.caption(f"{start:%b %-d, %Y} - {end:%b %-d, %Y}")
+with c3:
     st.write("")
     st.write("")
     if st.button("Reload from sheet"):
         st.cache_data.clear()
-
-if isinstance(picked, (tuple, list)):
-    start = picked[0]
-    end = picked[1] if len(picked) > 1 else picked[0]
-else:
-    start = end = picked
 
 try:
     df, other = _load()
@@ -207,7 +226,9 @@ if st.session_state.get("is_admin"):
         st.markdown("**Re-pull from Etsy**")
         n_days = (end - start).days + 1
         st.caption(f"Re-pulls {label} ({n_days} day(s)) from Etsy, ShipStation and the ERP and replaces those days in the sheet.")
-        if st.button("Re-pull selected dates", disabled=n_days > 31):
+        if n_days > 31:
+            st.caption("Longer ranges are pulled a month at a time and can take several minutes - keep this tab open.")
+        if st.button("Re-pull selected dates", disabled=n_days > 400):
             with st.spinner("Pulling from Etsy..."):
                 try:
                     count = sync_days([start + timedelta(days=i) for i in range(n_days)], progress=lambda m: None)
