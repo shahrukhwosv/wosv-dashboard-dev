@@ -11,6 +11,7 @@ Admins also get:
   - "Connect Etsy": the one-time Etsy approval (see etsy_client.py).
   - "Re-pull from Etsy": refreshes the selected dates right now.
 """
+import re
 from datetime import timedelta
 
 import pandas as pd
@@ -27,6 +28,18 @@ st.title("Etsy Orders")
 # the login check - see the comment there.)
 
 yesterday = store_local_today() - timedelta(days=1)
+
+
+def _item_names(items):
+    """'1x Mug - Coffee Mug [7041...] | 2x Tray [0060...]' -> 'Mug - Coffee Mug, 2x Tray'
+    (drops the SKU and the '1x' so the table column stays readable)."""
+    names = []
+    for part in str(items).split(" | "):
+        part = re.sub(r"\s*\[[^\]]*\]\s*$", "", part.strip())
+        part = re.sub(r"^1x\s+", "", part)
+        if part:
+            names.append(part)
+    return ", ".join(names)
 
 
 @st.cache_data(ttl=600)
@@ -91,7 +104,8 @@ else:
         )
 
     show = period.sort_values(["Date", "Order #"])
-    cols = ["Order #", "Buyer", "Total", "Etsy Fees", "Shipping", "Product Cost", "Profit", "Margin %"]
+    show = show.assign(Item=show["Items"].fillna("").map(_item_names))
+    cols = ["Order #", "Buyer", "Item", "Total", "Etsy Fees", "Shipping", "Product Cost", "Profit", "Margin %"]
     if start != end:
         cols = ["Date"] + cols
     table = show[cols].copy()
@@ -102,9 +116,10 @@ else:
         use_container_width=True,
         column_config={
             "Order #": st.column_config.NumberColumn(format="%d"),
+            "Item": st.column_config.TextColumn(width="large", help="Item(s) on the order; hover for the full name"),
             "Total": st.column_config.NumberColumn(format="dollar", help="What the buyer paid, including shipping and sales tax"),
             "Etsy Fees": st.column_config.NumberColumn(format="dollar", help="Transaction, processing, offsite ads and other fees Etsy charged for this order"),
-            "Shipping": st.column_config.NumberColumn(format="dollar", help="ShipStation label cost"),
+            "Shipping": st.column_config.NumberColumn(format="dollar", help="Label cost from ShipStation or Etsy (see Shipping Source under All columns)"),
             "Product Cost": st.column_config.NumberColumn(format="dollar", help="Top Shelf ERP cost x quantity (Etsy SKU = ERP UPC)"),
             "Profit": st.column_config.NumberColumn(format="dollar", help="Total - tax - refunds - Etsy fees - shipping - product cost"),
             "Margin %": st.column_config.TextColumn(help="Profit / revenue (total without sales tax or refunds)"),
@@ -118,10 +133,10 @@ else:
             "so their profit is overstated. Fix by setting the Etsy SKU to the product's ERP UPC:\n\n"
             + "\n".join(f"- {int(r['Order #'])}: {r['Cost Status'].removeprefix('Missing: ')}" for _, r in no_cost.iterrows())
         )
-    no_ship = period[period["Shipping Source"] != "ShipStation"]
+    no_ship = period[period["Shipping Source"].isin(["No label found", "Not found in ShipStation", "ShipStation not connected"])]
     if not no_ship.empty:
         st.warning(
-            f"{len(no_ship)} order(s) have no ShipStation label yet "
+            f"{len(no_ship)} order(s) have no shipping label found yet (ShipStation or Etsy) "
             f"({', '.join(str(int(i)) for i in no_ship['Order #'])}) - shipping counted as $0. "
             "Labels printed later are picked up automatically over the next nights."
         )

@@ -25,8 +25,9 @@ HOW EACH ORDER ROW IS CALCULATED:
                    sells, ...), minus any fees Etsy credited back on a
                    refund. Pulled from the shop's payment-account ledger
                    and the order's payment record.
-  Shipping       = ShipStation label cost for the order (matched on the
-                   Etsy order number)
+  Shipping       = label cost: ShipStation (matched on the Etsy order
+                   number) and/or a label bought on Etsy (from the
+                   ledger, minus any refund for a voided label)
   Product Cost   = for each item: Top Shelf ERP cost price x quantity,
                    matched by the Etsy SKU = ERP UPC
   Profit         = Revenue - Etsy Fees - Shipping - Product Cost
@@ -39,6 +40,7 @@ REFRESH SCHEDULE (nightly_refresh.py):
   last logged day, and the first run backfills from BACKFILL_START.
 """
 import os
+import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
@@ -63,7 +65,9 @@ OTHER_FEES_HEADER = ["Date", "Entry ID", "Type", "Description", "Amount", "Synce
 
 # Shipping Source values
 SRC_SHIPSTATION = "ShipStation"
-SRC_NOT_FOUND = "Not found in ShipStation"
+SRC_ETSY_LABEL = "Etsy label"
+SRC_BOTH = "ShipStation + Etsy label"
+SRC_NOT_FOUND = "No label found"
 SRC_NOT_CONFIGURED = "ShipStation not connected"
 
 COST_OK = "OK"
@@ -81,6 +85,12 @@ def _money(v):
 def _is_fee(entry):
     t = (entry.get("ledger_type") or "").lower()
     return t not in NOT_FEE_TYPES and not t.startswith("disburse") and "tax" not in t
+
+
+def _is_label(entry):
+    """Shipping labels bought on Etsy (and refunds of voided ones). These
+    are shipping cost, not an Etsy fee."""
+    return "shipping_label" in (entry.get("ledger_type") or "").lower()
 
 
 def _entry_time(entry):
@@ -101,21 +111,40 @@ def assign_fees(receipts, entries):
     of entries not tied to any of these orders. An entry belongs to an
     order when its reference_id is the order's receipt id or one of its
     line items' transaction ids; listing-level entries (like the auto-renew
-    when an item sells) go to the nearest-in-time order for that listing."""
-    by_id, by_listing = {}, defaultdict(list)
+    when an item sells) go to the nearest-in-time order for that listing.
+
+    Etsy shipping labels are matched by, in order: the order's shipment id,
+    the order number appearing in the entry's description, or - failing
+    both - the order Etsy marked shipped closest in time (within 6 hours)
+    that doesn't already have a label."""
+    by_id, by_listing, shipped = {}, defaultdict(list), []
     for r in receipts:
         rid = str(r["receipt_id"])
         by_id[rid] = rid
+        for sh in r.get("shipments") or []:
+            if sh.get("receipt_shipping_id"):
+                by_id[str(sh["receipt_shipping_id"])] = rid
+            ts = sh.get("shipment_notification_timestamp") or sh.get("created_timestamp")
+            if ts:
+                shipped.append((int(ts), rid))
         for t in r.get("transactions") or []:
             by_id[str(t.get("transaction_id"))] = rid
             by_listing[str(t.get("listing_id"))].append((int(r.get("create_timestamp") or r.get("created_timestamp") or 0), rid))
 
-    per_order, unmatched = defaultdict(list), []
+    per_order, unmatched, pending_labels = defaultdict(list), [], []
     for e in entries:
         if not _is_fee(e):
             continue
         ref = str(e.get("reference_id") or "")
         rid = by_id.get(ref)
+        if rid is None and _is_label(e):
+            for num in re.findall(r"\d{8,}", e.get("description") or ""):
+                if num in by_id:
+                    rid = by_id[num]
+                    break
+            if rid is None:
+                pending_labels.append(e)
+                continue
         if rid is None and ref in by_listing:
             when = _entry_time(e).timestamp()
             ts, candidate = min(by_listing[ref], key=lambda c: abs(c[0] - when))
@@ -125,6 +154,16 @@ def assign_fees(receipts, entries):
             unmatched.append(e)
         else:
             per_order[rid].append(e)
+
+    # Labels that couldn't be tied to an order by id: nearest shipment.
+    for e in sorted(pending_labels, key=lambda x: _entry_time(x)):
+        when = _entry_time(e).timestamp()
+        labelled = {rid for rid, es in per_order.items() if any(_is_label(x) and (x.get("amount") or 0) < 0 for x in es)}
+        options = [(abs(ts - when), rid) for ts, rid in shipped if rid not in labelled and abs(ts - when) <= 6 * 3600]
+        if (e.get("amount") or 0) < 0 and options:
+            per_order[min(options)[1]].append(e)
+        else:
+            unmatched.append(e)
     return per_order, unmatched
 
 
@@ -132,6 +171,8 @@ def _fee_summary(entries, payments):
     """Total fee for an order (positive number) and a short breakdown."""
     parts = defaultdict(float)
     for e in entries:
+        if _is_label(e):
+            continue  # counted as shipping, see build_order_row
         parts[(e.get("ledger_type") or "fee").lower()] += -(e.get("amount") or 0) / 100.0
     # Payment processing fees live on the payment record. Only add them if
     # the ledger didn't already list them, so they're never counted twice.
@@ -185,17 +226,26 @@ def build_order_row(etsy, costs, receipt, fee_entries):
 
     fees, fee_detail = _fee_summary(fee_entries, etsy.receipt_payments(rid))
 
-    if not shipstation_client.is_configured():
+    label_entries = [e for e in fee_entries if _is_label(e)]
+    etsy_label = _money(-sum((e.get("amount") or 0) for e in label_entries) / 100.0) if label_entries else None
+    ss_cost = shipstation_client.label_cost(order_number=rid) if shipstation_client.is_configured() else None
+
+    if ss_cost is not None and etsy_label is not None:
+        shipping, ship_src = _money(ss_cost + etsy_label), SRC_BOTH
+    elif ss_cost is not None:
+        shipping, ship_src = _money(ss_cost), SRC_SHIPSTATION
+    elif etsy_label is not None:
+        shipping, ship_src = etsy_label, SRC_ETSY_LABEL
+    elif not shipstation_client.is_configured():
         shipping, ship_src = 0.0, SRC_NOT_CONFIGURED
     else:
-        cost = shipstation_client.label_cost(order_number=rid)
-        shipping, ship_src = (0.0, SRC_NOT_FOUND) if cost is None else (_money(cost), SRC_SHIPSTATION)
+        shipping, ship_src = 0.0, SRC_NOT_FOUND
 
     product_cost, problems, items = 0.0, [], []
     for t in receipt.get("transactions") or []:
         qty = int(t.get("quantity") or 0)
         sku = (t.get("sku") or "").strip()
-        items.append(f"{qty}x {t.get('title') or ''}"[:60] + (f" [{sku}]" if sku else ""))
+        items.append(f"{qty}x {t.get('title') or ''}"[:150] + (f" [{sku}]" if sku else ""))
         unit, problem = costs.unit_cost(sku)
         if problem:
             problems.append(problem)
