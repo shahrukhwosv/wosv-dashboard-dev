@@ -56,6 +56,7 @@ from sales_pace import update_daily_log, store_local_today
 from store_access import get_store_list, PACE_CALCULATOR_STORES_LIST
 from dashboard_data import save_mama_snapshot
 from topshelf_invoices import nightly_sync as refresh_topshelf_invoices
+from etsy_orders import nightly_sync as refresh_etsy_orders
 
 
 # NOTE: this script runs outside Streamlit (no logged-in user, no
@@ -116,6 +117,7 @@ def main():
         ("pace log", lambda: refresh_pace_log(config)),
         ("mama's sold", lambda: refresh_mama_sold(config)),
         ("top shelf invoices", refresh_topshelf_invoices),
+        ("etsy orders", refresh_etsy_orders),
     ]
     failed = []
     for name, step in steps:

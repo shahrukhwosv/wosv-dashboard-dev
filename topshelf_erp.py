@@ -298,6 +298,21 @@ class ErpClient:
         result = self.get(f"/order/lineItem/{invoice_id}", {"storeIds": ERP_STORE_IDS, "sortedByProductName": "true"})
         return [li for li in (result or []) if not li.get("deleted")]
 
+    # -- products -----------------------------------------------------------
+
+    def products_by_upc(self, upc):
+        """Products whose UPC is exactly `upc`. Same call the ERP's Product
+        List search box makes - that search also matches name/SKU, so the
+        results are filtered down to exact UPC matches here. Several color
+        variants can share one UPC; each result has costPrice."""
+        upc = str(upc).strip()
+        if not upc:
+            return []
+        result = self.get("/product/list", {
+            "storeIds": ERP_STORE_IDS, "name": upc, "sku": upc, "upc": upc, "page": 0, "size": 50,
+        })
+        return [p for p in (result or {}).get("content") or [] if str(p.get("upc") or "").strip() == upc]
+
     def invoice_shipments(self, invoice_id):
         """Shipment records the ERP keeps for this invoice - for ShipStation
         orders, channelOrderId is the ShipStation orderId."""
