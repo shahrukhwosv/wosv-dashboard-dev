@@ -7,7 +7,7 @@ WHAT'S IN IT (all read from data the dashboard already keeps - this script
 makes no Lightspeed/ERP calls of its own):
   01 Retail (World of Smoke & Vape): yesterday's total sales, South and
      North store pace (projected month totals, same math and same store
-     groups as the Pace Calculator page), and the top 5 stores by
+     groups as the Pace Calculator page), and every Pace Calculator store by
      yesterday's sales with each one's monthly pace.
      -> pace log Google Sheet (sales_pace.read_daily_log)
   02 Wholesale (Top Shelf Novelties): month-to-date revenue, profit,
@@ -129,15 +129,18 @@ def gather():
     day = log[log["date"] == yesterday]
     paces = {k: compute_pace(log, k, today)["projected_monthly"] for k in store_keys if k in set(log["store"])}
     pace_by_name = {names[k]: v for k, v in paces.items()}
-    top5 = (
-        day.groupby("store")["total"].sum().sort_values(ascending=False).head(5)
-        if not day.empty else pd.Series(dtype=float)
+    # Every store on the Pace Calculator, best day first (a store with no
+    # sales logged yesterday still shows, at $0).
+    by_store = day.groupby("store")["total"].sum() if not day.empty else pd.Series(dtype=float)
+    all_stores = sorted(
+        ((names[k], float(by_store.get(k, 0.0)), paces.get(k, 0.0)) for k in store_keys),
+        key=lambda x: (-x[1], x[0]),
     )
     retail = {
         "sales": float(day["total"].sum()),
         "south_pace": sum(v for n, v in pace_by_name.items() if n in SOUTH_STORES),
         "north_pace": sum(v for n, v in pace_by_name.items() if n in NORTH_STORES),
-        "top5": [(names.get(k, k), float(v), paces.get(k, 0.0)) for k, v in top5.items()],
+        "stores": all_stores,
     }
 
     # --- Wholesale ---
@@ -253,12 +256,12 @@ def build_html(d, first_name):
     yday = d["yesterday"].strftime("%b %-d").upper()
 
     # --- Retail rows ---
-    if r["top5"]:
+    if r["stores"]:
         rows = "".join(
-            "<tr>" + _td(escape(n), last=i == len(r["top5"]) - 1)
-            + _td(money0(s), True, last=i == len(r["top5"]) - 1)
-            + _td(money0(p), True, last=i == len(r["top5"]) - 1) + "</tr>"
-            for i, (n, s, p) in enumerate(r["top5"])
+            "<tr>" + _td(escape(n), last=i == len(r["stores"]) - 1)
+            + _td(money0(s), True, last=i == len(r["stores"]) - 1)
+            + _td(money0(p), True, last=i == len(r["stores"]) - 1) + "</tr>"
+            for i, (n, s, p) in enumerate(r["stores"])
         )
     else:
         rows = f'<tr><td colspan="3" style="padding:12px 4px; color:#6b7280;">No store sales logged for yesterday.</td></tr>'
@@ -273,7 +276,7 @@ def build_html(d, first_name):
           ("NORTH PACE", money0(r["north_pace"]), "North stores", WOSV["text"]),
       ], WOSV["tile"])}</td></tr>
       <tr><td style="padding:20px 22px 0;">
-        <div style="font-size:11px; letter-spacing:1.5px; color:#6b7280; font-weight:700; margin-bottom:4px;">TOP 5 STORES &bull; {yday}</div>
+        <div style="font-size:11px; letter-spacing:1.5px; color:#6b7280; font-weight:700; margin-bottom:4px;">ALL STORES &bull; {yday}</div>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:13px;">
           <tr style="font-size:10px; letter-spacing:1px; color:#6b7280;"><td {TH}>LOCATION</td><td {THR}>YESTERDAY</td><td {THR}>MONTHLY PACE</td></tr>
           {rows}
@@ -409,7 +412,7 @@ def build_text(d):
     r, t, m = d["retail"], d["tsn"], d["mamas"]
     lines = [f"The Morning Brief - {d['today']:%A, %B %-d, %Y}", ""]
     lines += [f"RETAIL: yesterday {money0(r['sales'])} | South pace {money0(r['south_pace'])} | North pace {money0(r['north_pace'])}"]
-    lines += [f"  {n}: {money0(s)} (pace {money0(p)})" for n, s, p in r["top5"]]
+    lines += [f"  {n}: {money0(s)} (pace {money0(p)})" for n, s, p in r["stores"]]
     lines += ["", f"WHOLESALE MTD: revenue {money0(t['revenue'])} | profit {money0(t['profit'])} | {t['count']} invoices"]
     lines += [f"  #{int(x['Invoice #'])} {x['Customer']}: {money2(x['Amount'])}, profit {money2(x['Profit'])}" for x in t["rows"]]
     lines += ["", f"MAMA'S SOLD yesterday: {m['units']:,.0f} units, {money2(m['sales'])}"]
