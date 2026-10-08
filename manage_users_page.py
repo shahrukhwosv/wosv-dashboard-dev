@@ -7,7 +7,7 @@ Regular (non-admin) users never see this page in the sidebar.
 import streamlit as st
 
 from auth import create_user, list_users, delete_user
-from lightspeed_client import load_config
+from lightspeed_client import load_config, save_config
 from store_access import (
     get_accessible_store_keys,
     set_user_access,
@@ -49,6 +49,31 @@ with st.expander("🔧 Store key diagnostic"):
             diag_pace = get_store_list(PACE_CALCULATOR_STORES_LIST, default_keys=list(diag_config["stores"].keys()))
             st.write(f"- Currently in the saved Standard Stores list: **{diag_key in diag_standard}**")
             st.write(f"- Currently in the saved Pace Calculator Stores list: **{diag_key in diag_pace}**")
+
+    # Pace-only toggle. Lives outside the "Check" button block because
+    # Streamlit resets a button to False on the rerun a second click causes.
+    diag_entry = diag_config["stores"].get(diag_key)
+    if diag_entry is not None:
+        st.markdown("**Pace-only flag**")
+        st.caption(
+            "Pace-only stores are hidden from Commissions and Transactions, "
+            "even if they're in the Standard Stores list."
+        )
+        current_flag = bool(diag_entry.get("pace_only"))
+        new_flag = st.checkbox(
+            f"{diag_entry.get('name', diag_key)} is pace-only",
+            value=current_flag,
+            key=f"pace_only_checkbox_{diag_key}",
+        )
+        if new_flag != current_flag and st.button("Save pace-only flag", key="save_pace_only"):
+            fresh_config = load_config()  # re-read so we don't overwrite newer changes
+            if new_flag:
+                fresh_config["stores"][diag_key]["pace_only"] = True
+            else:
+                fresh_config["stores"][diag_key].pop("pace_only", None)
+            save_config(fresh_config)
+            st.success(f"Saved. pace_only is now {new_flag} for {diag_key}.")
+            st.rerun()
 
 with st.expander("🔄 Run nightly refresh now"):
     st.caption(
