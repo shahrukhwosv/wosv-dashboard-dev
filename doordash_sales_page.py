@@ -26,6 +26,7 @@ tomorrow and the Today button would come back empty.
 Respects per-user store access via get_page_store_keys (no store list
 restriction), and page access via page key "doordash_sales".
 """
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -182,6 +183,21 @@ def run_report(store_keys, store_names, like_pattern, start_date, end_date):
         for future in as_completed(futures):
             store_key, result = future.result()
             results[store_key] = result
+
+    # Stores that failed in the parallel pass are usually ones whose access
+    # token needed refreshing at the same moment as others - Lightspeed's
+    # shared OAuth endpoint answers a burst of refreshes with 429. Retry
+    # those stores one at a time, with a pause, so the refreshes don't
+    # collide. Reloading config picks up tokens other threads already saved.
+    for attempt in range(2):
+        failed = [key for key in store_keys if results[key]["error"]]
+        if not failed:
+            break
+        time.sleep(3 * (attempt + 1))
+        config = ls.load_config()
+        for store_key in failed:
+            _, results[store_key] = _fetch_one(store_key)
+            time.sleep(1)
     return results
 
 
@@ -205,9 +221,16 @@ def render_report(report):
     col2.metric("Total (incl. tax)", f"${total_amount:,.2f}")
     col3.metric("Stores with sales", sum(1 for key in selected if results[key]["rows"]))
 
-    errors = [store_names[key] for key in selected if results[key]["error"]]
+    errors = [key for key in selected if results[key]["error"]]
     if errors:
-        st.warning(f"Couldn't reach Lightspeed for: {', '.join(errors)}. Try running it again.")
+        st.warning(
+            f"Couldn't get data from Lightspeed for: {', '.join(store_names[k] for k in errors)}. "
+            "These stores aren't included in the totals below."
+        )
+        with st.expander("Error details"):
+            for key in errors:
+                st.markdown(f"**{store_names[key]}**")
+                st.code(results[key]["error"][:1500], language=None)
 
     no_customer = [
         store_names[key] for key in selected
