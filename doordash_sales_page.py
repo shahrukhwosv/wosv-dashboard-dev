@@ -112,7 +112,7 @@ def fetch_customer_sales(config, store_key, customer_ids, start_date, end_date):
         ("completed", "true"),
         ("timeStamp", f"><,{start_utc.isoformat(timespec='seconds')},{end_utc.isoformat(timespec='seconds')}"),
         ("customerID", f"IN,[{','.join(sorted(customer_ids))}]"),
-        ("load_relations", '["SaleLines","SaleLines.Item","Employee"]'),
+        ("load_relations", '["SaleLines","SaleLines.Item"]'),
     ]
     sales = ls.fetch_all(config, store_key, "Sale.json", params=params, record_key="Sale")
     return [
@@ -138,10 +138,6 @@ def _sale_row(sale, store_name, store_key, customers):
         description = ((line.get("Item") or {}).get("description") or "").strip() or "Misc item"
         items.append(f"{qty:g} × {description}" if qty != 1 else description)
 
-    employee = sale.get("Employee") or {}
-    employee_name = " ".join(
-        part for part in ((employee.get("firstName") or "").strip(), (employee.get("lastName") or "").strip()) if part
-    )
 
     subtotal = _num(sale.get("calcSubtotal")) - abs(_num(sale.get("calcDiscount")))
     tax = _num(sale.get("calcTax1")) + _num(sale.get("calcTax2"))
@@ -153,7 +149,6 @@ def _sale_row(sale, store_name, store_key, customers):
         "Time": time_label,
         "Ticket #": sale.get("ticketNumber") or sale.get("saleID"),
         "Customer": customers.get(str(sale.get("customerID")), ""),
-        "Employee": employee_name,
         "Items": ", ".join(items),
         "Subtotal": subtotal,
         "Tax": tax,
