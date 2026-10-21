@@ -36,7 +36,7 @@ import streamlit as st
 
 import doordash_sales as dd
 import lightspeed_client as ls
-from store_access import get_page_store_keys
+from store_access import get_lm_store_keys, get_page_store_keys
 
 st.title("Doordash Sales")
 
@@ -206,9 +206,13 @@ search_text = st.text_input(
     help="Matches the customer's first name, last name or company. Spaces and letter case don't matter, so “doordash” also finds “Door Dash”.",
 ).strip()
 
-store_scope = st.radio("Stores", ["All stores", "Choose stores"], horizontal=True, key="dd_store_scope")
+store_scope = st.radio("Stores", ["All stores", "LM Stores", "Choose stores"], horizontal=True, key="dd_store_scope")
 if store_scope == "All stores":
     selected_stores = all_store_keys
+elif store_scope == "LM Stores":
+    # Every Pace Calculator store this user can see
+    lm_keys = get_lm_store_keys(config)
+    selected_stores = [key for key in all_store_keys if key in lm_keys]
 else:
     selected_stores = sorted(
         st.multiselect("Select stores", all_store_keys, default=all_store_keys, format_func=_store_name),

@@ -297,3 +297,12 @@ def get_page_store_keys(config, list_name=None, default_keys=None, require_conne
 
     restricted = get_store_list(list_name, default_keys=default_keys)
     return {k for k in user_keys if k in restricted}
+
+
+def get_lm_store_keys(config):
+    """The "LM Stores" quick pick offered next to "Choose stores" on pages
+    with a store picker: every store on the Pace Calculator list (as
+    edited on Manage Users). Same default as everywhere else that reads
+    that list - every store in config until an admin saves one. Pages
+    intersect this with the stores the current user can see."""
+    return get_store_list(PACE_CALCULATOR_STORES_LIST, default_keys=list(config["stores"].keys()))

@@ -80,7 +80,7 @@ import lightspeed_client as ls
 from dashboard_data import load_mama_snapshot
 from sales_pace import compute_pace, month_actual_total, read_daily_log, store_local_today
 from store_regions import NORTH_STORES, SOUTH_STORES
-from store_access import PACE_CALCULATOR_STORES_LIST, get_page_store_keys
+from store_access import PACE_CALCULATOR_STORES_LIST, get_lm_store_keys, get_page_store_keys
 from page_access import get_accessible_pages
 from topshelf_invoices import read_log as read_tsn_log
 
@@ -504,7 +504,13 @@ with chart_col:
             else:
                 with popover_col:
                     with st.popover("Stores", use_container_width=True):
-                        preset_col1, preset_col2 = st.columns(2)
+                        preset_col1, preset_col2, preset_col3 = st.columns(3)
+                        if preset_col3.button("LM Stores", use_container_width=True):
+                            lm_keys = get_lm_store_keys(config)
+                            st.session_state["dashboard_trend_stores"] = sorted(
+                                name for key, name in store_names.items() if key in lm_keys
+                            )
+                            st.rerun()
                         if preset_col1.button("North Stores", use_container_width=True):
                             st.session_state["dashboard_trend_stores"] = sorted(
                                 NORTH_STORES & set(store_names.values())

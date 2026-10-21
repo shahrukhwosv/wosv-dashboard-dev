@@ -46,7 +46,7 @@ from purchase_order_status import (
     load_po_status_snapshot,
 )
 from sales_pace import store_local_today, STORE_TIMEZONE
-from store_access import get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
+from store_access import get_lm_store_keys, get_page_store_keys, STANDARD_STORES_LIST, DEFAULT_STANDARD_STORE_KEYS
 
 STAGE_LABELS = {
     "open": "Open",
@@ -160,9 +160,18 @@ st.subheader("Filters")
 
 filter_cols = st.columns(4)
 with filter_cols[0]:
-    selected_stores = st.multiselect(
-        "Store", options=sorted(full_df["Store"].unique()), default=[]
-    )
+    store_options = sorted(full_df["Store"].unique())
+    if st.button("LM Stores", key="po_status_lm_stores"):
+        # Fill the Store filter with every Pace Calculator store in the data
+        lm_names = {store_names[key] for key in get_lm_store_keys(config) if key in store_names}
+        st.session_state["po_status_store_filter"] = [name for name in store_options if name in lm_names]
+    # Drop any remembered pick that isn't in the freshly loaded data
+    # (Streamlit errors on a multiselect value that's not an option).
+    if "po_status_store_filter" in st.session_state:
+        st.session_state["po_status_store_filter"] = [
+            name for name in st.session_state["po_status_store_filter"] if name in store_options
+        ]
+    selected_stores = st.multiselect("Store", options=store_options, key="po_status_store_filter")
 with filter_cols[1]:
     selected_vendors = st.multiselect(
         "Vendor", options=sorted(full_df["Vendor"].unique()), default=[]

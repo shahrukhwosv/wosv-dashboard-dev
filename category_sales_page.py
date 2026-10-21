@@ -44,7 +44,7 @@ import pandas as pd
 import streamlit as st
 
 import lightspeed_client as ls
-from store_access import get_page_store_keys
+from store_access import get_lm_store_keys, get_page_store_keys
 
 st.title("Category Sales")
 
@@ -544,9 +544,13 @@ elif search_mode == "Keyword":
 else:
     upc = st.text_input("UPC", placeholder="e.g. 012345678905").strip()
 
-store_scope = st.radio("Stores", ["All stores", "Choose stores"], horizontal=True)
+store_scope = st.radio("Stores", ["All stores", "LM Stores", "Choose stores"], horizontal=True)
 if store_scope == "All stores":
     selected_stores = all_store_keys
+elif store_scope == "LM Stores":
+    # Every Pace Calculator store this user can see
+    lm_keys = get_lm_store_keys(config)
+    selected_stores = [key for key in all_store_keys if key in lm_keys]
 else:
     selected_stores = st.multiselect(
         "Select stores",
