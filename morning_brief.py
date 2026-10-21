@@ -10,6 +10,9 @@ makes no Lightspeed/ERP calls of its own):
      groups as the Pace Calculator page), and every Pace Calculator store by
      yesterday's sales with each one's monthly pace.
      -> pace log Google Sheet (sales_pace.read_daily_log)
+     Below that, yesterday's DoorDash orders at those same stores: total
+     orders, items and sales, plus each store that had any.
+     -> dashboard database (dashboard_data.load_doordash_snapshot)
   02 Wholesale (Top Shelf Novelties): month-to-date revenue, profit,
      margin and invoice count, plus yesterday's invoices with a totals row.
      -> "Top Shelf Invoices" sheet tab (topshelf_invoices.read_log)
@@ -68,7 +71,7 @@ from html import escape
 import pandas as pd
 
 import reprally_client
-from dashboard_data import load_mama_snapshot
+from dashboard_data import load_doordash_snapshot, load_mama_snapshot
 from lightspeed_client import load_config
 from sales_pace import compute_pace, read_daily_log, store_local_today
 from store_access import PACE_CALCULATOR_STORES_LIST, get_store_list
@@ -141,6 +144,24 @@ def gather():
         "south_pace": sum(v for n, v in pace_by_name.items() if n in SOUTH_STORES),
         "north_pace": sum(v for n, v in pace_by_name.items() if n in NORTH_STORES),
         "stores": all_stores,
+    }
+
+    # --- DoorDash (same Pace Calculator stores) ---
+    dd_date, dd_stores, dd_failed = load_doordash_snapshot()
+    if dd_date != yesterday:
+        notes.append("DoorDash sales weren't updated for yesterday." if dd_date is None
+                     else f"DoorDash sales are from {dd_date:%b %-d}, not yesterday.")
+        dd_stores, dd_failed = [], []
+    listed_names = set(names.values())
+    dd_stores = [s for s in (dd_stores or []) if s["name"] in listed_names]
+    if dd_failed:
+        notes.append(f"DoorDash sales couldn't be loaded for {len(dd_failed)} store(s).")
+    with_orders = sorted((s for s in dd_stores if s["orders"] > 0), key=lambda s: (-s["sales"], s["name"]))
+    retail["doordash"] = {
+        "orders": sum(s["orders"] for s in dd_stores),
+        "items": sum(s["items"] for s in dd_stores),
+        "sales": sum(s["sales"] for s in dd_stores),
+        "stores": [(s["name"], s["orders"], s["sales"]) for s in with_orders],
     }
 
     # --- Wholesale ---
@@ -251,6 +272,36 @@ def _td(v, right=False, color=None, last=False, bold=False):
     return f'<td{align} style="{style}">{v}</td>'
 
 
+def _doordash_block(dd, yday):
+    """DoorDash section inside the Retail card, below the Pace Calculator
+    button: three tiles, then each store that had DoorDash orders."""
+    if dd["stores"]:
+        n = len(dd["stores"])
+        rows = "".join(
+            "<tr>" + _td(escape(name), last=i == n - 1) + _td(f"{orders:,}", True, last=i == n - 1)
+            + _td(money2(sales), True, last=i == n - 1) + "</tr>"
+            for i, (name, orders, sales) in enumerate(dd["stores"])
+        )
+        table = f'''
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:13px;">
+          <tr style="font-size:10px; letter-spacing:1px; color:#6b7280;"><td {TH}>LOCATION</td><td {THR}>ORDERS</td><td {THR}>REVENUE</td></tr>
+          {rows}
+        </table>'''
+    else:
+        table = '<div style="font-size:13px; color:#6b7280; padding:4px 0;">No DoorDash orders yesterday.</div>'
+    return f'''
+      <tr><td style="padding:22px 22px 0;">
+        <div style="border-top:1px solid {WOSV["border"]}; padding-top:18px; font-size:11px; letter-spacing:1.5px; color:{WOSV["text"]}; font-weight:700; margin-bottom:10px;">DOORDASH &bull; {yday}</div>
+        {_tiles([
+            ("ORDERS", f'{dd["orders"]:,}', "", None),
+            ("ITEMS", f'{dd["items"]:,.0f}', "", None),
+            ("SALES", money2(dd["sales"]), "", None),
+        ], WOSV["tile"])}
+      </td></tr>
+      <tr><td style="padding:16px 22px 22px;">{table}
+      </td></tr>'''
+
+
 def build_html(d, first_name):
     r, t, m = d["retail"], d["tsn"], d["mamas"]
     yday = d["yesterday"].strftime("%b %-d").upper()
@@ -282,7 +333,8 @@ def build_html(d, first_name):
           {rows}
         </table>
       </td></tr>
-      <tr><td style="padding:18px 22px 22px;">{_button(DASHBOARD_URL + "/pace_calculator_page", "Open Pace Calculator", WOSV["btn_bg"], WOSV["btn_fg"])}</td></tr>
+      <tr><td style="padding:18px 22px 0;">{_button(DASHBOARD_URL + "/pace_calculator_page", "Open Pace Calculator", WOSV["btn_bg"], WOSV["btn_fg"])}</td></tr>
+      {_doordash_block(r["doordash"], yday)}
     </table>
   </td></tr>'''
 
@@ -413,6 +465,9 @@ def build_text(d):
     lines = [f"The Morning Brief - {d['today']:%A, %B %-d, %Y}", ""]
     lines += [f"RETAIL: yesterday {money0(r['sales'])} | South pace {money0(r['south_pace'])} | North pace {money0(r['north_pace'])}"]
     lines += [f"  {n}: {money0(s)} (pace {money0(p)})" for n, s, p in r["stores"]]
+    dd = r["doordash"]
+    lines += [f"DOORDASH yesterday: {dd['orders']:,} orders | {dd['items']:,.0f} items | {money2(dd['sales'])}"]
+    lines += [f"  {n}: {o:,} order{'' if o == 1 else 's'}, {money2(s)}" for n, o, s in dd["stores"]]
     lines += ["", f"WHOLESALE MTD: revenue {money0(t['revenue'])} | profit {money0(t['profit'])} | {t['count']} invoices"]
     lines += [f"  #{int(x['Invoice #'])} {x['Customer']}: {money2(x['Amount'])}, profit {money2(x['Profit'])}" for x in t["rows"]]
     lines += ["", f"MAMA'S SOLD yesterday: {m['units']:,.0f} units, {money2(m['sales'])}"]

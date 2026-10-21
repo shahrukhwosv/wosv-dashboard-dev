@@ -4,7 +4,9 @@ Doordash Sales page (doordash_sales_page.py).
 Shows how many sales (and how much money) went through the "DoorDash"
 customer at each store for a date range - defaults to today.
 
-How it works, per store (stores run in parallel, same as Category Sales):
+The lookup itself lives in doordash_sales.py (shared with the nightly
+refresh that feeds the morning brief). How it works, per store (stores
+run in parallel, same as Category Sales):
   1. Look up the store's customer record(s) whose first name, last name
      or company matches the search text (default "doordash"). The match
      is a wildcard on the letters with anything in between, so "DoorDash",
@@ -26,100 +28,23 @@ tomorrow and the Today button would come back empty.
 Respects per-user store access via get_page_store_keys (no store list
 restriction), and page access via page key "doordash_sales".
 """
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 
+import doordash_sales as dd
 import lightspeed_client as ls
 from store_access import get_page_store_keys
 
 st.title("Doordash Sales")
 
 CENTRAL = ZoneInfo("America/Chicago")
-CUSTOMER_FIELDS = ("firstName", "lastName", "company")
 
 
 def _today_central():
     return datetime.now(CENTRAL).date()
-
-
-def _search_to_like(search_text):
-    """Turns the search box into a Lightspeed LIKE pattern. 'doordash' or
-    'door dash' -> '%door%dash%' (catches both spellings); any other text
-    has its spaces turned into wildcards, e.g. 'dd orders' -> '%dd%orders%'."""
-    cleaned = " ".join(search_text.lower().split())
-    if cleaned.replace(" ", "") == "doordash":
-        return "%door%dash%"
-    return "%" + cleaned.replace(" ", "%") + "%"
-
-
-def _num(value):
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _as_list(value):
-    if not value:
-        return []
-    return [value] if isinstance(value, dict) else list(value)
-
-
-def _customer_label(customer):
-    first = (customer.get("firstName") or "").strip()
-    last = (customer.get("lastName") or "").strip()
-    company = (customer.get("company") or "").strip()
-    name = " ".join(part for part in (first, last) if part)
-    if company and company.casefold() != name.casefold():
-        name = f"{name} ({company})" if name else company
-    return name or f"Customer {customer.get('customerID')}"
-
-
-def find_customers(config, store_key, like_pattern):
-    """Returns {customerID: display name} for every customer at this store
-    whose first name, last name or company matches like_pattern."""
-    found = {}
-    for field in CUSTOMER_FIELDS:
-        records = ls.fetch_all(
-            config, store_key, "Customer.json",
-            params={"limit": 100, field: f"~,{like_pattern}"},
-            record_key="Customer",
-        )
-        for customer in records:
-            customer_id = str(customer.get("customerID") or "")
-            if customer_id and customer_id != "0":
-                found[customer_id] = _customer_label(customer)
-    return found
-
-
-def fetch_customer_sales(config, store_key, customer_ids, start_date, end_date):
-    """Completed, non-voided sales for the given customerIDs between
-    start_date and end_date (inclusive, in the store's local time)."""
-    store_tz = ls._get_store_timezone(store_key)
-    start_utc = datetime.combine(start_date, dt_time.min, tzinfo=store_tz).astimezone(timezone.utc)
-    end_utc = (
-        datetime.combine(end_date + timedelta(days=1), dt_time.min, tzinfo=store_tz)
-        - timedelta(seconds=1)
-    ).astimezone(timezone.utc)
-
-    params = [
-        ("limit", 100),
-        ("completed", "true"),
-        ("timeStamp", f"><,{start_utc.isoformat(timespec='seconds')},{end_utc.isoformat(timespec='seconds')}"),
-        ("customerID", f"IN,[{','.join(sorted(customer_ids))}]"),
-        ("load_relations", '["SaleLines","SaleLines.Item"]'),
-    ]
-    sales = ls.fetch_all(config, store_key, "Sale.json", params=params, record_key="Sale")
-    return [
-        sale for sale in sales
-        if str(sale.get("voided", "false")).lower() != "true"
-        and str(sale.get("archived", "false")).lower() != "true"
-    ]
 
 
 def _sale_row(sale, store_name, store_key, customers):
@@ -133,15 +58,13 @@ def _sale_row(sale, store_name, store_key, customers):
         time_label, sort_time = raw_time, 0
 
     items = []
-    for line in _as_list((sale.get("SaleLines") or {}).get("SaleLine")):
-        qty = _num(line.get("unitQuantity"))
+    for line in dd.as_list((sale.get("SaleLines") or {}).get("SaleLine")):
+        qty = dd.num(line.get("unitQuantity"))
         description = ((line.get("Item") or {}).get("description") or "").strip() or "Misc item"
         items.append(f"{qty:g} × {description}" if qty != 1 else description)
 
-
-    subtotal = _num(sale.get("calcSubtotal")) - abs(_num(sale.get("calcDiscount")))
-    tax = _num(sale.get("calcTax1")) + _num(sale.get("calcTax2"))
-    total = _num(sale.get("calcTotal", sale.get("total")))
+    subtotal = dd.num(sale.get("calcSubtotal")) - abs(dd.num(sale.get("calcDiscount")))
+    tax = dd.num(sale.get("calcTax1")) + dd.num(sale.get("calcTax2"))
 
     return {
         "_sort": sort_time,
@@ -152,48 +75,23 @@ def _sale_row(sale, store_name, store_key, customers):
         "Items": ", ".join(items),
         "Subtotal": subtotal,
         "Tax": tax,
-        "Total": total,
+        "Total": dd.sale_total(sale),
     }
 
 
-def run_report(store_keys, store_names, like_pattern, start_date, end_date):
-    config = ls.load_config()
-    results = {}
+def run_report(store_keys, store_names, search_text, start_date, end_date):
+    """Lookup + retries live in doordash_sales.fetch_stores (shared with
+    the nightly refresh / morning brief); this just turns raw sales into rows."""
+    raw = dd.fetch_stores(store_keys, start_date, end_date, search_text)
+    return {
+        key: {
+            "customers": r["customers"],
+            "rows": [_sale_row(s, store_names[key], key, r["customers"]) for s in r["sales"]],
+            "error": r["error"],
+        }
+        for key, r in raw.items()
+    }
 
-    def _fetch_one(store_key):
-        try:
-            customers = find_customers(config, store_key, like_pattern)
-            sales = (
-                fetch_customer_sales(config, store_key, customers.keys(), start_date, end_date)
-                if customers else []
-            )
-            rows = [_sale_row(s, store_names[store_key], store_key, customers) for s in sales]
-            return store_key, {"customers": customers, "rows": rows, "error": None}
-        except Exception as e:
-            print(f"[{store_key}] Doordash sales fetch failed: {e}")
-            return store_key, {"customers": {}, "rows": [], "error": str(e)}
-
-    with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
-        futures = [pool.submit(_fetch_one, key) for key in store_keys]
-        for future in as_completed(futures):
-            store_key, result = future.result()
-            results[store_key] = result
-
-    # Stores that failed in the parallel pass are usually ones whose access
-    # token needed refreshing at the same moment as others - Lightspeed's
-    # shared OAuth endpoint answers a burst of refreshes with 429. Retry
-    # those stores one at a time, with a pause, so the refreshes don't
-    # collide. Reloading config picks up tokens other threads already saved.
-    for attempt in range(2):
-        failed = [key for key in store_keys if results[key]["error"]]
-        if not failed:
-            break
-        time.sleep(3 * (attempt + 1))
-        config = ls.load_config()
-        for store_key in failed:
-            _, results[store_key] = _fetch_one(store_key)
-            time.sleep(1)
-    return results
 
 
 def render_report(report):
@@ -354,7 +252,7 @@ if st.button("Run report", type="primary"):
     store_names = {key: _store_name(key) for key in selected_stores}
     with st.spinner(f"Checking {len(selected_stores)} store(s)..."):
         results = run_report(
-            selected_stores, store_names, _search_to_like(search_text), start_date, end_date
+            selected_stores, store_names, search_text, start_date, end_date
         )
     st.session_state["dd_report"] = {
         "results": results,

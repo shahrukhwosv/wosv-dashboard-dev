@@ -21,6 +21,9 @@ WHAT THIS DOES (and why nothing else needs to change to pick it up):
      metric previously required a live Lightspeed fetch on every
      Dashboard page load (see dashboard_page.py's git history), which is
      exactly what this script now does once, overnight, instead.
+  3. Saves yesterday's DoorDash orders (orders, items, sales) for each
+     Pace Calculator store (dashboard_data.save_doordash_snapshot) - read
+     by morning_brief.py's Retail section.
 
 DEPLOYING THIS AS A RAILWAY CRON JOB:
   1. In your Railway project, add a new service from this SAME GitHub
@@ -54,7 +57,8 @@ import lightspeed_client as ls
 from lightspeed_client import load_config
 from sales_pace import update_daily_log, store_local_today
 from store_access import get_store_list, PACE_CALCULATOR_STORES_LIST
-from dashboard_data import save_mama_snapshot
+from dashboard_data import save_doordash_snapshot, save_mama_snapshot
+import doordash_sales
 from topshelf_invoices import nightly_sync as refresh_topshelf_invoices
 from etsy_orders import nightly_sync as refresh_etsy_orders
 
@@ -108,6 +112,35 @@ def refresh_mama_sold(config):
     )
 
 
+def refresh_doordash(config):
+    # Same stores as the Pace Calculator / the morning brief's Retail section
+    all_keys = list(config["stores"].keys())
+    restricted = get_store_list(PACE_CALCULATOR_STORES_LIST, default_keys=all_keys)
+    store_keys = [k for k in all_keys if k in restricted and config["stores"][k].get("refresh_token")]
+    snapshot_date = store_local_today() - timedelta(days=1)
+    print(f"[doordash] Fetching {snapshot_date.isoformat()} across {len(store_keys)} store(s)...")
+
+    results = doordash_sales.fetch_stores(store_keys, snapshot_date, snapshot_date)
+    stores, failed_stores = [], []
+    for key in store_keys:
+        r = results[key]
+        if r["error"]:
+            failed_stores.append(key)
+            continue
+        stores.append({
+            "name": config["stores"][key].get("name") or key,
+            "orders": len(r["sales"]),
+            "items": sum(doordash_sales.sale_item_count(s) for s in r["sales"]),
+            "sales": sum(doordash_sales.sale_total(s) for s in r["sales"]),
+        })
+
+    save_doordash_snapshot(snapshot_date, stores, failed_stores)
+    print(
+        f"[doordash] Saved: {sum(s['orders'] for s in stores)} order(s), "
+        f"${sum(s['sales'] for s in stores):,.2f} ({len(failed_stores)} store(s) failed and were excluded)"
+    )
+
+
 def main():
     config = load_config()
     # Each step runs even if an earlier one fails, so e.g. an ERP outage
@@ -116,6 +149,7 @@ def main():
     steps = [
         ("pace log", lambda: refresh_pace_log(config)),
         ("mama's sold", lambda: refresh_mama_sold(config)),
+        ("doordash", lambda: refresh_doordash(config)),
         ("top shelf invoices", refresh_topshelf_invoices),
         ("etsy orders", refresh_etsy_orders),
     ]
