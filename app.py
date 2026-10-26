@@ -122,7 +122,7 @@ with st.sidebar:
         f"""
         <div style="line-height: 1.3; margin-bottom: 0.5rem;">
             <div style="font-size: 0.9rem; font-weight: 500;">{st.session_state.username}</div>
-            <div style="font-size: 0.75rem; color: var(--text-secondary, #9CA3AF);">{role_label}</div>
+            <div style="font-size: 0.75rem; color: #6b7280;">{role_label}</div>
         </div>
         """,
         unsafe_allow_html=True,

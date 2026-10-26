@@ -1,7 +1,10 @@
 [theme]
-base = "dark"
-primaryColor = "#6366F1"
-backgroundColor = "#0F1117"
-secondaryBackgroundColor = "#161A26"
-textColor = "#E5E7EB"
-font = "sans serif"
+# Light "Morning Brief" look - matches the email (morning_brief.py).
+base = "light"
+primaryColor = "#0b6f96"
+backgroundColor = "#f7f6f2"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#111827"
+borderColor = "#e5e3dc"
+font = "sans-serif"
+headingFont = "serif"
