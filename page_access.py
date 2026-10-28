@@ -26,6 +26,7 @@ PAGE_REGISTRY = [
     ("monthly_reports", "Monthly Reports"),
     ("purchase_order_status", "Purchase Order Status"),
     ("topshelf_invoices", "Top Shelf Invoices"),
+    ("wosv_lost_sales", "WOSV Lost Sales"),
     ("doordash_sales", "Doordash Sales"),
     ("etsy_orders", "Etsy Orders"),
 ]

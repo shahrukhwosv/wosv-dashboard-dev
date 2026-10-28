@@ -13,7 +13,7 @@ Run with:  streamlit run app.py
 The actual page content lives in dashboard_page.py, commission_page.py,
 reconciliation_page.py, touch_tell_page.py, pace_calculator_page.py,
 category_sales_page.py, monthly_reports_page.py,
-purchase_order_status_page.py, topshelf_invoices_page.py,
+purchase_order_status_page.py, topshelf_invoices_page.py, wosv_lost_sales_page.py,
 doordash_sales_page.py, etsy_orders_page.py, add_store_page.py, and manage_users_page.py.
 
 NOTE: pace_calculator_page.py has its own separate simple password gate
@@ -68,6 +68,7 @@ page_objects = {
     "monthly_reports": st.Page("monthly_reports_page.py", title="Monthly Reports", icon=":material/summarize:"),
     "purchase_order_status": st.Page("purchase_order_status_page.py", title="Purchase Order Status", icon=":material/assignment:"),
     "topshelf_invoices": st.Page("topshelf_invoices_page.py", title="Top Shelf Invoices", icon=":material/request_quote:"),
+    "wosv_lost_sales": st.Page("wosv_lost_sales_page.py", title="WOSV Lost Sales", icon=":material/remove_shopping_cart:"),
     "doordash_sales": st.Page("doordash_sales_page.py", title="Doordash Sales", icon=":material/delivery_dining:"),
     # url_path is fixed because it's registered on Etsy as the OAuth callback (ETSY_REDIRECT_URI)
     "etsy_orders": st.Page("etsy_orders_page.py", title="Etsy Orders", icon=":material/storefront:", url_path="etsy_orders"),

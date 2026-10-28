@@ -38,6 +38,17 @@ ERP_BASE_URL = os.getenv("ERP_BASE_URL", "https://erp.topshelfnovelties.com").rs
 ERP_STORE_IDS = os.getenv("ERP_STORE_IDS", "1,2")  # the ERP's own store ids (Cash & Carry + Ecommerce)
 ERP_TIMEZONE = ZoneInfo("America/Chicago")
 
+# Sales order statuses the ERP's own Lost Sales report includes by default.
+LOST_SALES_ORDER_STATUS_IDS = "650,651,653,761,762"
+# Invoice statuses the ERP's product History tab counts as a sale
+# (i.e. everything except voided/cancelled invoices).
+INVOICE_STATUSES = "Pending Payment,Partially Paid,Paid,Completed"
+
+
+def _fmt_utc(dt):
+    """Datetime -> the "YYYY-MM-DD HH:MM:SS" UTC string the report APIs take."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
 # Refresh the access token when it has less than this long left. The
 # nightly job runs every ~24h and access tokens last ~33h, so this makes
 # each nightly run roll the token pair forward (keeping the 3-day refresh
@@ -312,6 +323,62 @@ class ErpClient:
             "storeIds": ERP_STORE_IDS, "name": upc, "sku": upc, "upc": upc, "page": 0, "size": 50,
         })
         return [p for p in (result or {}).get("content") or [] if str(p.get("upc") or "").strip() == upc]
+
+    def invoice_sales_order_id(self, invoice_id):
+        """The sales order an invoice was created from (None if it wasn't
+        made from one, e.g. a cash & carry sale)."""
+        return self.invoice_header(invoice_id).get("salesOrderId")
+
+    # -- reports ------------------------------------------------------------
+
+    def lost_sales_by_product(self, start_utc, end_utc, brand_id=None,
+                              sales_order_status_ids=LOST_SALES_ORDER_STATUS_IDS):
+        """Report > Lost Sales, "Lost Sales by Product" view. One entry per
+        product, each with lossSalesBySalesRepWithOrderDtoDtoList = the
+        individual sales order lines where it was ordered but not sold.
+        `start_utc`/`end_utc` are timezone-aware datetimes (sales order
+        created between them)."""
+        params = {
+            "storeIds": ERP_STORE_IDS,
+            "salesOrderStatusIds": sales_order_status_ids,
+            "startDate": _fmt_utc(start_utc),
+            "endDate": _fmt_utc(end_utc),
+            "reportType": "lostSalesByProduct",
+            "size": 200,
+        }
+        if brand_id is not None:
+            params["brandId"] = brand_id
+        products, page = [], 0
+        while True:
+            result = self.get("/report/sales/lostSalesReportByReportType", {**params, "page": page})
+            block = (result or {}).get("lossSalesBySalesRepDtoList") or {}
+            products.extend(block.get("content") or [])
+            if block.get("last", True):
+                return products
+            page += 1
+
+    def product_sales_history(self, product_id, start_utc, end_utc,
+                              statuses=INVOICE_STATUSES):
+        """Every invoice line for one product between two times - the
+        product page's History > Product Sales/Purchase History tab. Each
+        line has orderId (the invoice #), customerId, totalQuantity,
+        returnQuantity and insertedTimestamp ("YYYY-MM-DD HH:MM:SS", UTC)."""
+        params = {
+            "storeIds": ERP_STORE_IDS,
+            "status": statuses,
+            "startDate": _fmt_utc(start_utc),
+            "endDate": _fmt_utc(end_utc),
+            "reportType": "child",
+            "size": 500,
+        }
+        lines, page = [], 0
+        while True:
+            result = self.get(f"/report/sales/byProductSummary/product/{product_id}", {**params, "page": page})
+            block = (result or {}).get("salesByProductList") or {}
+            lines.extend(block.get("content") or [])
+            if block.get("last", True):
+                return lines
+            page += 1
 
     def invoice_shipments(self, invoice_id):
         """Shipment records the ERP keeps for this invoice - for ShipStation
