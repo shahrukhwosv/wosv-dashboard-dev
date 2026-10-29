@@ -46,9 +46,10 @@ except requests.HTTPError as e:
     code = e.response.status_code if e.response is not None else "?"
     if code in (401, 403):
         st.error(
-            f"The ERP refused the request (HTTP {code}). The ERP login the dashboard uses needs "
-            "permission to view Reports and Products - give that user access in the ERP, or reconnect "
-            "from the Top Shelf Invoices page."
+            f"The ERP refused the request (HTTP {code}), even with a fresh login token. The ERP user "
+            "the dashboard uses needs permission to view Reports (Lost Sales, Sales by Product) and "
+            "Products. If you just gave it that access, reconnect the ERP from the Top Shelf Invoices "
+            "page so the dashboard signs in again with the new permissions."
         )
     else:
         st.error(f"ERP request failed (HTTP {code}): {e}")

@@ -269,7 +269,11 @@ class ErpClient:
             headers={"Authorization": f"Bearer {self._tokens['access']}"},
             timeout=60,
         )
-        if resp.status_code == 401 and not _retried:
+        # 403 also gets one fresh token: the access token carries the
+        # user's permissions as of when it was issued (it lasts ~33h), so
+        # after an admin grants the ERP user more access, the old token
+        # keeps getting refused until it's swapped for a new one.
+        if resp.status_code in (401, 403) and not _retried:
             self._tokens = _refresh(self._tokens)
             return self.get(path, params, _retried=True)
         if resp.status_code == 429 and not _retried:
