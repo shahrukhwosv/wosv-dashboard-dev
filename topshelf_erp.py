@@ -261,6 +261,29 @@ class ErpClient:
             tokens = _refresh(tokens)
         self._tokens = tokens
         self._session = requests.Session()
+        # Look like the ERP's own web app. Report endpoints (Lost Sales,
+        # Sales by Product) refused the dashboard's token while accepting
+        # the same request from the browser, so send what the browser sends.
+        self._session.headers.update({
+            "Accept": "application/json, text/plain",
+            "Origin": ERP_BASE_URL,
+            "Referer": f"{ERP_BASE_URL}/",
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"),
+        })
+
+    def token_summary(self):
+        """Non-secret facts about the current access token, for error
+        messages: who it's for, its type, and when it was issued/expires."""
+        try:
+            payload = self._tokens["access"].split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            c = json.loads(base64.urlsafe_b64decode(payload))
+        except Exception:
+            return "unreadable token"
+        fmt = lambda t: datetime.fromtimestamp(t, tz=ERP_TIMEZONE).strftime("%b %d %I:%M %p") if t else "?"
+        return (f"user {c.get('sub')}, type {c.get('tokenType')}, userType {c.get('userType')}, "
+                f"issued {fmt(c.get('iat'))}, expires {fmt(c.get('exp'))}")
 
     def get(self, path, params=None, _retried=False):
         resp = self._session.get(
@@ -279,6 +302,15 @@ class ErpClient:
         if resp.status_code == 429 and not _retried:
             time.sleep(5)
             return self.get(path, params, _retried=True)
+        if resp.status_code >= 400:
+            # Keep the ERP's own explanation - it's usually specific.
+            try:
+                err = (resp.json() or {}).get("error") or {}
+                reason = err.get("message") or err.get("details")
+            except ValueError:
+                reason = None
+            if reason:
+                raise requests.HTTPError(f"{resp.status_code} for {path}: {reason}", response=resp)
         resp.raise_for_status()
         return resp.json().get("result")
 

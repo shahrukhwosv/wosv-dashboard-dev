@@ -45,11 +45,15 @@ except topshelf_erp.ErpAuthError as e:
 except requests.HTTPError as e:
     code = e.response.status_code if e.response is not None else "?"
     if code in (401, 403):
+        try:
+            token_info = topshelf_erp.ErpClient().token_summary()
+        except Exception as te:
+            token_info = f"couldn't read token ({te})"
         st.error(
-            f"The ERP refused the request (HTTP {code}), even with a fresh login token. The ERP user "
-            "the dashboard uses needs permission to view Reports (Lost Sales, Sales by Product) and "
-            "Products. If you just gave it that access, reconnect the ERP from the Top Shelf Invoices "
-            "page so the dashboard signs in again with the new permissions."
+            f"The ERP refused the request (HTTP {code}), even with a fresh login token.\n\n"
+            f"ERP said: {e}\n\nDashboard's ERP login: {token_info}\n\n"
+            "If you just changed this ERP user's access, reconnect the ERP from the Top Shelf "
+            "Invoices page so the dashboard signs in again."
         )
     else:
         st.error(f"ERP request failed (HTTP {code}): {e}")
