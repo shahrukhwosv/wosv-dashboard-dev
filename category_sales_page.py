@@ -22,7 +22,10 @@ contributed
 to that total. A "See Trend" toggle shows a combined (all selected
 stores summed together, not per-store) Units Sold line chart - bucketed
 by day for ranges of 30 days or fewer, or by 7-day chunks (labeled by
-each chunk's start date) for longer ranges.
+each chunk's start date) for longer ranges. A "Download PDF" button
+next to "See Trend" exports the results (summary, store table in its
+current sort order, and per-store item breakdown) - see
+category_sales_pdf.py.
 
 Respects per-user store access (see store_access.py): admins see every
 connected store, regular users only see stores explicitly granted to them -
@@ -45,6 +48,7 @@ import streamlit as st
 
 import lightspeed_client as ls
 from store_access import get_lm_store_keys, get_page_store_keys
+from category_sales_pdf import build_category_sales_pdf, pdf_filename
 
 st.title("Category Sales")
 
@@ -254,7 +258,7 @@ def render_report(report):
         unsafe_allow_html=True,
     )
 
-    _render_trend_section(report, results, selected_stores)
+    _render_trend_section(report, results, selected_stores, rows)
 
     col_widths = [3, 2, 2, 2]
     expanded = st.session_state.setdefault("cat_sales_expanded", set())
@@ -351,7 +355,7 @@ def _build_trend_dataframe(combined_by_day, start_date, end_date):
     return pd.DataFrame({"Units Sold": values}, index=pd.Index(labels, name="Date"))
 
 
-def _render_trend_section(report, results, selected_stores):
+def _render_trend_section(report, results, selected_stores, rows):
     """Combined (all-stores) trend line for the current search, toggled via
     a 'See Trend' button. Independent of the table's sort/expand state -
     it always covers every selected store and the full selected date
@@ -359,9 +363,20 @@ def _render_trend_section(report, results, selected_stores):
     days or fewer, otherwise by 7-day chunks from the start date - see
     _build_trend_dataframe."""
     show_trend = st.session_state.get("cat_sales_show_trend", False)
-    if st.button("See Trend" if not show_trend else "Hide Trend", key="cat_sales_trend_toggle"):
+    button_cols = st.columns([1, 1, 4])
+    if button_cols[0].button("See Trend" if not show_trend else "Hide Trend", key="cat_sales_trend_toggle", use_container_width=True):
         st.session_state["cat_sales_show_trend"] = not show_trend
         st.rerun()
+    # PDF follows the table's current sort order. Built on each render
+    # (cheap - no Lightspeed calls, just the cached results).
+    button_cols[1].download_button(
+        "Download PDF",
+        data=build_category_sales_pdf(report, rows),
+        file_name=pdf_filename(report),
+        mime="application/pdf",
+        key="cat_sales_pdf",
+        use_container_width=True,
+    )
 
     if not show_trend:
         return
@@ -636,6 +651,9 @@ if st.button("Run report", type="primary"):
     st.session_state["cat_sales_report"] = {
         "search_mode": search_mode,
         "selected_category": selected_category,
+        "keyword": keyword,
+        "exclude_keyword": exclude_keyword,
+        "upc": upc,
         "results": results,
         "store_names": {
             store_key: connected_stores[store_key].get("name") or store_key
