@@ -85,6 +85,12 @@ def describe_search(report):
     mode = report["search_mode"]
     if mode == "Category":
         return f"Category: {report.get('selected_category') or ''}"
+    if mode == "Merged Category":
+        members = report.get("merged_members") or []
+        return (
+            f"Merged category: {report.get('selected_category') or ''}"
+            f" (includes: {', '.join(members)})"
+        )
     if mode == "Keyword":
         text = f"Keyword: {report.get('keyword') or ''}"
         if report.get("exclude_keyword"):
@@ -224,6 +230,7 @@ def pdf_filename(report):
     mode = report["search_mode"]
     term = {
         "Category": report.get("selected_category"),
+        "Merged Category": report.get("selected_category"),
         "Keyword": report.get("keyword"),
         "UPC": report.get("upc"),
     }.get(mode) or mode

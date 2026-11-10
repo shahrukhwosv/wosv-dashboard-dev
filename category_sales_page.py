@@ -3,6 +3,11 @@ Category Sales page (category_sales_page.py).
 
 Lets the user search sales three ways:
   - Category: pick a category (e.g. "Rolling Trays") from a dropdown
+  - Merged Category: pick one name that groups the same category spelled
+    differently across stores (e.g. "Delta - Pre-Rolls" covers "Delta Pre
+    Roll", "Delta- PreRolls", ...). The page lists every included category
+    and which stores have it before you run the report. Groups live in
+    category_merge_map.json - edit that file to add/move names.
   - Keyword: type a keyword (e.g. "mug") and it matches any item with that
     exact word in its description (whole-word match, not substring - "raw"
     matches "RAW King Size Slims" but not "Strawberry Vape Juice").
@@ -40,8 +45,10 @@ independently at each store. Stores are queried in parallel (each store is
 an independent Lightspeed account, so there's no shared state to worry
 about).
 """
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -206,6 +213,11 @@ def render_report(report):
             f"No category named \"{selected_category}\" found at: "
             f"{', '.join(missing_stores)}. Shown as $0 below - this likely "
             f"means that store uses a slightly different category name."
+        )
+    elif search_mode == "Merged Category" and missing_stores:
+        st.warning(
+            f"None of the categories in \"{selected_category}\" were found at: "
+            f"{', '.join(missing_stores)}. Shown as $0 below."
         )
 
     rows = []
@@ -445,6 +457,50 @@ def run_category_report(store_keys, categories_by_store, selected_category, star
     return results
 
 
+MERGE_MAP_PATH = Path(__file__).with_name("category_merge_map.json")
+
+
+@st.cache_data(show_spinner=False)
+def load_merge_map():
+    """{merged name: [original Lightspeed category names]} - see
+    category_merge_map.json. Groups the same category spelled differently
+    across stores (e.g. "Delta Pre Roll", "Delta- PreRolls") under one name."""
+    with open(MERGE_MAP_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def run_merged_category_report(store_keys, categories_by_store, member_names, start_date, end_date):
+    """Like run_category_report, but each store's total covers every one of
+    its categories whose name is in member_names. Items from all matching
+    categories are pooled before the sales lookup, so nothing is counted
+    twice."""
+    config = ls.load_config()
+    members = set(member_names)
+    results = {}
+
+    def _fetch_one(store_key):
+        category_ids = [
+            cid for cid, name in categories_by_store[store_key].items() if name in members
+        ]
+        if not category_ids:
+            return store_key, None  # store has none of the merged categories
+        try:
+            return store_key, ls.fetch_categories_sales(
+                config, store_key, category_ids, start_date, end_date
+            )
+        except Exception as e:
+            print(f"[{store_key}] Merged category sales fetch failed: {e}")
+            return store_key, None
+
+    with ThreadPoolExecutor(max_workers=max(len(store_keys), 1)) as pool:
+        futures = [pool.submit(_fetch_one, store_key) for store_key in store_keys]
+        for future in as_completed(futures):
+            store_key, result = future.result()
+            results[store_key] = result
+
+    return results
+
+
 def run_keyword_report(store_keys, keyword, exclude_keyword, start_date, end_date):
     """Fetches keyword sales for each store in parallel. A store that
     errors out (e.g. limited API access) is logged and treated as no
@@ -511,14 +567,43 @@ all_store_keys = sorted(
     key=lambda store_key: (connected_stores[store_key].get("name") or store_key).casefold(),
 )
 
-search_mode = st.radio("Search by", ["Category", "Keyword", "UPC"], horizontal=True)
+search_mode = st.radio(
+    "Search by", ["Category", "Merged Category", "Keyword", "UPC"], horizontal=True
+)
 
 selected_category = None
+merged_members = None
 keyword = None
 exclude_keyword = None
 upc = None
 
-if search_mode == "Category":
+if search_mode == "Merged Category":
+    with st.spinner("Loading categories..."):
+        categories_by_store = get_categories_by_store(tuple(all_store_keys))
+
+    merge_map = load_merge_map()
+    selected_category = st.selectbox("Merged category", sorted(merge_map, key=str.casefold))
+    merged_members = merge_map[selected_category]
+
+    # Which stores have each member category, so the user can see exactly
+    # what this merged report will pull in before running it.
+    store_label = {
+        key: connected_stores[key].get("name") or key for key in all_store_keys
+    }
+    member_rows = []
+    for name in merged_members:
+        stores_with = [
+            store_label[key] for key in all_store_keys
+            if name in categories_by_store.get(key, {}).values()
+        ]
+        member_rows.append({
+            "Included category": name,
+            "Stores": len(stores_with),
+            "Found at": ", ".join(stores_with) if stores_with else "— not at any of your stores",
+        })
+    st.markdown(f"**This report includes {len(merged_members)} categories:**")
+    st.dataframe(pd.DataFrame(member_rows), hide_index=True, use_container_width=True)
+elif search_mode == "Category":
     with st.spinner("Loading categories..."):
         categories_by_store = get_categories_by_store(tuple(all_store_keys))
 
@@ -639,6 +724,10 @@ if st.button("Run report", type="primary"):
             results = run_category_report(
                 selected_stores, categories_by_store, selected_category, start_date, end_date
             )
+        elif search_mode == "Merged Category":
+            results = run_merged_category_report(
+                selected_stores, categories_by_store, merged_members, start_date, end_date
+            )
         elif search_mode == "Keyword":
             results = run_keyword_report(selected_stores, keyword, exclude_keyword, start_date, end_date)
         else:
@@ -651,6 +740,7 @@ if st.button("Run report", type="primary"):
     st.session_state["cat_sales_report"] = {
         "search_mode": search_mode,
         "selected_category": selected_category,
+        "merged_members": merged_members,
         "keyword": keyword,
         "exclude_keyword": exclude_keyword,
         "upc": upc,

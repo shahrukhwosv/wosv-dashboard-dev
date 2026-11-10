@@ -787,6 +787,23 @@ def fetch_category_sales(config, store_key, category_id, start_date, end_date):
     }
 
 
+def fetch_categories_sales(config, store_key, category_ids, start_date, end_date):
+    """Like fetch_category_sales, but for several categories at one store
+    (used by the Category Sales page's "Merged Category" mode). Items from
+    every category are pooled first, then sales are looked up once, so an
+    item can't be counted twice."""
+    item_map = {}
+    for category_id in category_ids:
+        item_map.update(fetch_items_by_category(config, store_key, category_id))
+    result = fetch_item_ids_sales(config, store_key, item_map.keys(), start_date, end_date)
+    return {
+        "total": result["total"],
+        "quantity": result["quantity"],
+        "items": _build_item_breakdown(item_map, result["by_item"]),
+        "by_day": result["by_day"],
+    }
+
+
 def fetch_keyword_sales(config, store_key, keyword, start_date, end_date, exclude_keyword=None):
     """Sums sales for one store, for all items whose description contains
     any of the given keyword term(s) (comma-separated for multiple, OR
