@@ -1,7 +1,7 @@
 """
 WOSV Lost Sales page.
 
-WOSV-brand items lost on Top Shelf sales orders this year (ordered but not
+WOSV-brand items lost on Top Shelf sales orders since Nov 1, 2026 (ordered but not
 shipped on that order), split into "Still owed" and "Fulfilled since".
 A lost line clears automatically once a later invoice sends the same item
 to the same store - see wosv_lost_sales.py for the exact rule.
@@ -21,8 +21,9 @@ from sales_pace import store_local_today
 st.title("WOSV Lost Sales")
 
 today = store_local_today()
+since = wosv_lost_sales.LOST_SALES_START_DATE.strftime("%b %-d, %Y")
 st.caption(
-    f"WOSV-brand items ordered on a Top Shelf sales order since Jan 1, {today.year} that didn't ship on that order. "
+    f"WOSV-brand items ordered on a Top Shelf sales order since {since} that didn't ship on that order. "
     "A line clears on its own once a later invoice sends the same item to the same store."
 )
 
@@ -89,7 +90,7 @@ common_config = {
 
 st.subheader("Still owed")
 if open_df.empty:
-    st.success("Nothing owed - every WOSV lost item this year has been sent.")
+    st.success(f"Nothing owed - every WOSV lost item since {since} has been sent.")
 else:
     stores = sorted(open_df["Store"].dropna().unique())
     picked_stores = st.multiselect("Stores", stores, placeholder="All stores")
@@ -159,8 +160,9 @@ if not open_df.empty or not done_df.empty:
 with st.expander("How this works"):
     st.markdown(
         "- **Lost lines** come from the ERP's *Report > Lost Sales* (by product), filtered to the **WOSV** brand, "
-        f"for sales orders created since Jan 1, {today.year}. An item only appears here once its Brand is set to WOSV "
-        "on the product in the ERP.\n"
+        f"for sales orders created since {since}, including orders the ERP has marked Completed (the ERP's own "
+        "report leaves those out, which hides lines that never shipped). An item only appears here once its "
+        "Brand is set to WOSV on the product in the ERP.\n"
         "- A line counts as **fulfilled** when a later invoice sends the **same product** to the **same store**. "
         "The original order's own invoice never counts. Quantities are applied oldest lost line first, so "
         "a partial shipment leaves the rest still owed. A store's normal reorder of the item counts too.\n"

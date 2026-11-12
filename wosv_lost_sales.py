@@ -28,10 +28,18 @@ Data (all from the ERP via topshelf_erp.ErpClient, read-only):
 
 Brand: WOSV is brand id 9 in the ERP (WOSV_BRAND_ID env var to override).
 Items only show up here once their Brand is set to WOSV on the product.
+
+Order statuses: the ERP's own Lost Sales report leaves out Completed (655)
+sales orders by default, but an order goes to Completed once the rest of it
+is invoiced even when some lines never shipped - so this page includes
+Completed orders too, or those lost lines would silently disappear.
+
+Start date: only sales orders created on or after LOST_SALES_START_DATE
+(Nov 1, 2026; WOSV_LOST_SALES_START env var, YYYY-MM-DD, to override).
 """
 import os
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -40,6 +48,10 @@ from sales_pace import store_local_today
 
 WOSV_BRAND_ID = int(os.getenv("WOSV_BRAND_ID", "9"))
 TZ = topshelf_erp.ERP_TIMEZONE
+
+# The ERP's default Lost Sales statuses plus 655 = Completed.
+LOST_SALES_STATUS_IDS = topshelf_erp.LOST_SALES_ORDER_STATUS_IDS + ",655"
+LOST_SALES_START_DATE = date.fromisoformat(os.getenv("WOSV_LOST_SALES_START", "2026-11-01"))
 
 
 # ---------------------------------------------------------------------------
@@ -164,20 +176,22 @@ def match_fulfillments(lost_lines, history_by_product, invoice_sales_order):
 # Pulling from the ERP
 # ---------------------------------------------------------------------------
 
-def year_start_utc(today=None):
-    today = today or store_local_today()
-    return datetime(today.year, 1, 1, tzinfo=TZ).astimezone(timezone.utc)
+def start_utc():
+    """Midnight Central on LOST_SALES_START_DATE, in UTC."""
+    d = LOST_SALES_START_DATE
+    return datetime(d.year, d.month, d.day, tzinfo=TZ).astimezone(timezone.utc)
 
 
 def fetch_lines(client=None, today=None, progress=None):
-    """Pulls this year's WOSV lost lines and matches them. Returns the
+    """Pulls WOSV lost lines since LOST_SALES_START_DATE and matches them. Returns the
     list of line dicts (see lost_lines_from_report + match_fulfillments)."""
     client = client or topshelf_erp.ErpClient()
     today = today or store_local_today()
-    start = year_start_utc(today)
+    start = start_utc()
     end = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=TZ).astimezone(timezone.utc) - timedelta(seconds=1)
 
-    report = client.lost_sales_by_product(start, end, brand_id=WOSV_BRAND_ID)
+    report = client.lost_sales_by_product(start, end, brand_id=WOSV_BRAND_ID,
+                                          sales_order_status_ids=LOST_SALES_STATUS_IDS)
     lines = lost_lines_from_report(report)
     if not lines:
         return []
